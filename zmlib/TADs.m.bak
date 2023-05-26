@@ -1,0 +1,72 @@
+% matlab -r "addpath(path); TADs('$input', '$output', '$addpath1'); exit"
+function TADs(input, output, addpath1)
+addpath(genpath(addpath1)); 
+
+data = load(input);
+transmat0 = [0.33 0.33 0.33
+             0.33 0.33 0.33
+             0.33 0.33 0.33];
+testX = data(:,4)';
+inim  = 1; endm  = 20;
+aic   = zeros(inim,endm);    
+
+best_p = cell(endm,1); best_d = cell(endm,1); best_g = cell(endm,1);
+
+Q = 3; O = 1;
+rnk = zeros(3,1);
+for M=inim:endm
+    fprintf(1, 'M = %d\n', M)
+    [mixModel] = mixGaussFit(testX',Q*M,'maxIter', 500);
+    mu0 = mixModel.cpd.mu;
+    Sigma0 = bsxfun(@plus, eye(1), mixModel.cpd.Sigma);
+    mixmat0 = mixModel.mixWeight;
+
+    % determine left boundary (2), right boundary (0), no bias (1)
+    mu0 = reshape(mu0, O, []);
+    [~, idx] = sort(sum(mu0, 1), 2);
+    mu0 = mu0(:, idx);
+    Sigma0 = reshape(Sigma0, O, O, []);
+    Sigma0 = Sigma0(:, :, idx);
+    mixmat0 = mixmat0(idx);
+    
+    mu0     = permute(reshape(mu0, O, M, Q), [1,3,2]);
+    Sigma0  = permute(reshape(Sigma0, O, O, M, Q), [1,2,4,3]);
+    mixmat0 = reshape(mixmat0, M, Q)';
+    prior0 = mk_stochastic(sum(mixmat0, 2)');
+    mixmat0 = mk_stochastic(mixmat0); % this line is added by ljw to normalize mixmat0
+    
+
+    [loglik, prior1, transmat1, mu1, Sigma1, mixmat1]     = mhmm_em(testX, prior0, transmat0, mu0, Sigma0, mixmat0,'max_iter', 500,'thresh',1e-5, 'verbose', 0);
+    loglik = loglik(end);
+    % loglik = mhmm_logprob(testX, prior1, transmat1, mu1, Sigma1, mixmat1);
+    num_p = numel(prior0) + numel(transmat0) + Q*M*O + Q*M*O*O + Q*M;
+    aic(M)    = (-2*loglik) + (2*num_p);
+
+    B = mixgauss_prob(testX, mu1, Sigma1, mixmat1);
+    best_p{M} = viterbi_path(prior1, transmat1, B);
+    best_g{M} = hmmFwdBack(prior1, transmat1, B);
+    best_d{M} = maxidx(best_g{M});
+
+    % determine left boundary (2), right boundary (0), no bias (1)
+    [~,idx] = sort(sum(sum(mu1, 1), 3));
+    rnk(idx) = 1:3;
+    best_p{M} = rnk(best_p{M});
+    best_g{M} = best_g{M}(idx,:);
+    best_d{M} = rnk(best_d{M});
+end
+
+
+ord = floor(log10(abs(min(aic)))) - 1;
+div = power(10,ord);
+
+for k=inim:endm
+     paic = exp((min(aic)-aic(k))/(div*2));
+     if (paic >= 0.9)
+         ind = k;
+         break;
+     end
+end    
+
+states = [best_p{ind}(:), best_d{ind}(:), best_g{ind}'];
+save (output,'aic','ind','states','-ASCII');    
+end  
