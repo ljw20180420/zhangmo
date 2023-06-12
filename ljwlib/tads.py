@@ -12,9 +12,8 @@ def renbin_call_tads_matlab(file, binsize=10000, DIwindows=2000000, boundsizemin
     shutil.rmtree('matlab_tads/tmp')
 
     genomeDI = pandas.concat([bioframe.read_table(f'matlab_tads/{os.path.basename(file)}.{chr}.DI', schema=['chrom','start','end','DI']) for chr in clr.chromnames]).reset_index(drop=True)
-    genomeDI['chrom'][genomeDI['chrom']=='M'] = 23
-    genomeDI['chrom'][genomeDI['chrom']=='X'] = 24
-    genomeDI['chrom'][genomeDI['chrom']=='Y'] = 25
+    for AB in ['M','X','Y']:
+        genomeDI['chrom'][genomeDI['chrom']==AB] = ljwlib.hic_module.chromindices[f"chr{AB}"] + 1
     genomeDI.sort_values(by=['chrom','start']).to_csv(path_or_buf=f'matlab_tads/{os.path.basename(file)}.DI', sep='\t', na_rep='nan', header=False, index=False)
     subprocess.check_output(f'matlab -nodisplay -r "addpath(\'zmlib\');TADs(\'matlab_tads/{os.path.basename(file)}.DI\', \'matlab_tads/{os.path.basename(file)}.hmm\', \'zmlib/required_modules\');exit"', shell=True)
     subprocess.check_output(f'perl zmlib/file_ends_cleaner.pl matlab_tads/{os.path.basename(file)}.hmm matlab_tads/{os.path.basename(file)}.DI | perl zmlib/converter_7col.pl > matlab_tads/{os.path.basename(file)}.7colfile', shell=True)

@@ -145,15 +145,15 @@ def all_intervals(local_parts_array,i,j,t):
 
 def use_TADtree(clr, output, M=10, gamma=500):
     # parameters
-    S = 2e6//clr.binsizes
-    p = 12e4//clr.binsizes
-    q = 48e4//clr.binsizes
+    S = 2000000//clr.binsize
+    p = 120000//clr.binsize
+    q = 480000//clr.binsize
     chrs = clr.chromnames
     N = [clr.chromsizes[chr]//1e6 for chr in chrs]
     
     # LOAD CONTACTS AND BACKGROUND
     print('Loading data')
-    mats = {chr : clr.matrix.fetch(chr) for chr in chrs}
+    mats = {chr : clr.matrix().fetch(chr) for chr in chrs}
     height = S
     backbins = []
     for chr in chrs:
@@ -176,7 +176,7 @@ def use_TADtree(clr, output, M=10, gamma=500):
         bmat = np.zeros((n,n))
         for i in range(n-2):
             for j in range(i+3,i+np.min([n-i, height])):
-                beta,delta,fit = betadelta(chr,i,j,mat,backgrnd)
+                beta,delta,fit = betadelta(chr,i,j,mats,backgrnd)
                 smat[i,j] = fit
                 smat[j,i] = fit
                 gmat[i,j] = delta

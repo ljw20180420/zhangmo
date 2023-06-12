@@ -1,10 +1,10 @@
-import functools, pickle, joblib, sys, pygenometracks.makeTracksFile, pygenometracks.plotTracks, seaborn
+import functools, pickle, joblib, sys, pygenometracks.makeTracksFile, pygenometracks.plotTracks, seaborn, shutil, sklearn.ensemble
 from ljwlib.hic_module import *
-import ljwlib.tads
 import ljwlib.softwares
+import ljwlib.tads
 import domaincaller.renbin
-import TADtree.TADtreelib
 import HiCtool.scripts.HiCtool_TAD_analysis_lib
+import TADtree.TADtreelib
 import ljwlib.scrab_ucsc
 import ljwlib.sundry
 
@@ -305,39 +305,76 @@ for loop_file in loop_files:
         
 
 ### call motifs
-CTCF_peak_file = 'ChIP_Nexus_results/WT_CTCF_ChIP-nexus_peaks.narrowPeak'
-ZNF143_peak_file = 'ChIP_Nexus_results/WT_ZNF143_ChIP-nexus_peaks.narrowPeak'
+CTCF_wildtype_peak_files = ['ChIP_Nexus_results/WT_CTCF_ChIP-nexus_peaks.narrowPeak','ChIP_Nexus_results/AID_CTCF_ChIP-nexus_peaks.narrowPeak']
 CTCF_pwm_files = ['motifs/CTCF_type1.txt','motifs/CTCF_type2.txt','motifs/CTCF_type3.txt']
+for CTCF_wildtype_peak_file in CTCF_wildtype_peak_files:
+    CTCF_motif_files = call_motifs(CTCF_wildtype_peak_file, CTCF_pwm_files)
+
+ZNF143_wildtype_peak_files = ['ChIP_Nexus_results/WT_ZNF143_ChIP-nexus_peaks.narrowPeak','ChIP_Nexus_results/AID_ZNF143_ChIP-nexus_peaks.narrowPeak']
 ZNF143_pwm_files = ['motifs/ZNF143_type1.txt','motifs/ZNF143_type2.txt','motifs/ZNF143_type3.txt']
-CTCF_motif_files = call_motifs(CTCF_peak_file, CTCF_pwm_files)
-ZNF143_motif_files = call_motifs(ZNF143_peak_file, ZNF143_pwm_files)
+for ZNF143_wildtype_peak_file in ZNF143_wildtype_peak_files:
+    ZNF143_motif_files = call_motifs(ZNF143_wildtype_peak_file, ZNF143_pwm_files)
+
+
+### ZNF143_peak SBS motif type
+ZNF143_pwm_files = ['motifs/ZNF143_type1.txt','motifs/ZNF143_type2.txt','motifs/ZNF143_type3.txt']
+ZNF143_wildtype_peak_files = ['ChIP_Nexus_results/WT_ZNF143_ChIP-nexus_peaks.narrowPeak','ChIP_Nexus_results/AID_ZNF143_ChIP-nexus_peaks.narrowPeak']
+ZNF143_peak_filess = [['ChIP_Nexus_results/WT_ZNF143_ChIP-nexus_peaks.narrowPeak'],['ChIP_Nexus_results/AID_ZNF143_ChIP-nexus_peaks.narrowPeak','ChIP_Nexus_results/AID-CD_ZNF143_ChIP-nexus_peaks.narrowPeak']]
+ZNF143_HiChIP_loop_filess = [['zmloops/WT_loop.bedpe'], ['zmloops/AID_loop_counts.bedpe', 'zmloops/AID-CD_loop_counts.bedpe']]
+for ZNF143_wildtype_peak_file, ZNF143_peak_files, ZNF143_HiChIP_loop_files in zip(ZNF143_wildtype_peak_files, ZNF143_peak_filess, ZNF143_HiChIP_loop_filess):
+    SBS = pandas.concat([bioframe.read_table(f"{ZNF143_pwm_file}.{os.path.basename(ZNF143_wildtype_peak_file)}.motifs", schema=['chrom', 'start', 'end', 'name', 'score', 'strand', 'pvalue', 'qvalue']) for ZNF143_pwm_file in ZNF143_pwm_files])
+    for ZNF143_peak_file in ZNF143_peak_files:
+        ZNF143 = bioframe.read_table(ZNF143_peak_file, schema='bed')
+        ZNF143 = standard_assign(ZNF143, SBS, '', 'SBS', 'pvalue', includes=['name', 'strand'], select_mode='min')
+        ZNF143['SBS_type'] = ['0' if not SBS_name else SBS_name[SBS_name.find('type')+4] for SBS_name in ZNF143['SBS_name']]
+        f, ax = matplotlib.pyplot.subplots(figsize=(20,20))
+        seaborn.histplot(data=ZNF143, x='SBS_type', ax=ax)
+        for patch in ax.patches:
+            ax.text(patch.get_x() + patch.get_width()/2., patch.get_height(), f'{int(patch.get_height())}', ha="center", va="bottom") 
+        f.savefig(f'results/motif_type_count/ZNF143_peak.{os.path.basename(ZNF143_peak_file)}.motif.type.count.pdf')
+        matplotlib.pyplot.close(f)
+    for ZNF143_HiChIP_loop_file in ZNF143_HiChIP_loop_files:
+        ZNF143_loops = bioframe.read_table(ZNF143_HiChIP_loop_file, schema=['chrom1', 'start1', 'end1', 'chrom2', 'start2', 'end2', 'name', 'score'], sep=' ')
+        ZNF143_loops = standard_assign(ZNF143_loops, SBS, 'a1', 'SBS', 'pvalue', includes=['name', 'strand'], select_mode='min', cols1=('chrom1', 'start1', 'end1'))
+        ZNF143_loops = standard_assign(ZNF143_loops, SBS, 'a2', 'SBS', 'pvalue', includes=['name', 'strand'], select_mode='min', cols1=('chrom2', 'start2', 'end2'))
+        ZNF143_loops['a1_SBS_type'] = ['0' if not SBS_name else SBS_name[SBS_name.find('type')+4] for SBS_name in ZNF143_loops['a1_SBS_name']]
+        ZNF143_loops['a2_SBS_type'] = ['0' if not SBS_name else SBS_name[SBS_name.find('type')+4] for SBS_name in ZNF143_loops['a2_SBS_name']]
+        ZNF143_loops['SBS_type'] = ["".join(numpy.sort([a1_SBS_type,a2_SBS_type])) for a1_SBS_type, a2_SBS_type in zip(ZNF143_loops['a1_SBS_type'], ZNF143_loops['a2_SBS_type'])]
+        f, ax = matplotlib.pyplot.subplots(figsize=(20,20))
+        seaborn.histplot(data=ZNF143_loops, x='SBS_type', ax=ax)
+        for patch in ax.patches:
+            ax.text(patch.get_x() + patch.get_width()/2., patch.get_height(), f'{int(patch.get_height())}', ha="center", va="bottom")
+        f.savefig(f'results/motif_type_count/ZNF143_peak.{os.path.basename(ZNF143_HiChIP_loop_file)}.motif.type.count.pdf')
+        matplotlib.pyplot.close(f)
+
+
+
 
 ### ctcf peak enrichment
-CTCF_motif_files = [f"{file}.motif" for file in CTCF_pwm_files]
-ZNF143_motif_files = [f"{file}.motif" for file in ZNF143_pwm_files]
-CTCF = bioframe.read_table(CTCF_peak_file, schema='bed').query(f'chrom in {list(chromsizes.keys())}').reset_index(drop=True)
+CTCF = bioframe.read_table(CTCF_peak_file, schema='bed')
 CTCF['mid'] = (CTCF.end+CTCF.start)//2
-ZNF143 = bioframe.read_table(ZNF143_peak_file, schema='bed').query(f'chrom in {list(chromsizes.keys())}').reset_index(drop=True)
+ZNF143 = bioframe.read_table(ZNF143_peak_file, schema='bed')
 # assign CBS to CTCF
-CBS = pandas.concat([bioframe.read_table(mf, schema=['chrom', 'start', 'end', 'name', 'score', 'strand', 'pvalue', 'qvalue']) for mf in CTCF_motif_files])
-CTCF = standard_assign(CTCF, CBS, '', 'CBS', 'pvalue', includes=['name', 'strand', 'distance'], select_mode='min', cols1=('chrom', 'start', 'end'), cols2=('chrom', 'start', 'end'))
+CBS = pandas.concat([bioframe.read_table(f"{CTCF_pwm_file}.{os.path.basename(CTCF_peak_file)}.motifs", schema=['chrom', 'start', 'end', 'name', 'score', 'strand', 'pvalue', 'qvalue']) for CTCF_pwm_file in CTCF_pwm_files])
+CTCF = standard_assign(CTCF, CBS, '', 'CBS', 'pvalue', includes=['name', 'strand'], select_mode='min', cols1=('chrom', 'start', 'end'), cols2=('chrom', 'start', 'end'))
 # assign SBS to ZNF143
-SBS = pandas.concat([bioframe.read_table(mf ,schema=['chrom', 'start', 'end', 'name', 'score', 'strand', 'pvalue', 'qvalue']) for mf in ZNF143_motif_files])
-ZNF143 = standard_assign(ZNF143, SBS, '', 'SBS', 'pvalue', includes=['name', 'strand', 'distance'], select_mode='min', cols1=('chrom', 'start', 'end'), cols2=('chrom', 'start', 'end'))
+SBS = pandas.concat([bioframe.read_table(f"{ZNF143_pwm_file}.{os.path.basename(ZNF143_peak_file)}.motifs", schema=['chrom', 'start', 'end', 'name', 'score', 'strand', 'pvalue', 'qvalue']) for ZNF143_pwm_file in ZNF143_pwm_files])
+ZNF143 = standard_assign(ZNF143, SBS, '', 'SBS', 'pvalue', includes=['name', 'strand'], select_mode='min', cols1=('chrom', 'start', 'end'), cols2=('chrom', 'start', 'end'))
 # assign ZNF143 to CTCF
-CTCF = standard_assign(CTCF, ZNF143, '', 'ZNF143', 'distance', includes=['name', 'distance', 'SBS_name', 'SBS_distance', 'SBS_strand'], select_mode='min', cols1=('chrom', 'start', 'end'), cols2=('chrom', 'start', 'end'))
-CTCF['SBS_distance'] = CTCF['ZNF143_distance'] + CTCF['ZNF143_SBS_distance']
+CTCF = standard_assign(CTCF, ZNF143, '', 'ZNF143', 'distance', includes=['SBS_name', 'SBS_strand', 'SBS_closest'], select_mode='min', cols1=('chrom', 'start', 'end'), cols2=('chrom', 'start', 'end'))
+CTCF['SBS_closest'] = CTCF['ZNF143_closest'] + CTCF['ZNF143_SBS_closest']
 # add hue columns
-for name in ['ZNF143', 'CBS', 'SBS']:
-    CTCF[f'{name}_has'] = [f'{name}NA' if disna else name for disna in CTCF[f'{name}_distance'].isna()]
+CTCF['ZNF143_has'] = ['ZNF143NA' if ZNF143_per_==0 else 'ZNF143' for ZNF143_per_ in CTCF['ZNF143_per_']]
+CTCF['CBS_has'] = ['CBSNA' if CBS_per_==0 else 'CBS' for CBS_per_ in CTCF['CBS_per_']]
+CTCF['SBS_has'] = ['SBSNA' if not ZNF143_SBS_name else 'SBS' for ZNF143_SBS_name in CTCF['ZNF143_SBS_name']]
 CTCF['total_has'] = CTCF['ZNF143_has'] + '_' + CTCF['CBS_has'] + '_' + CTCF['SBS_has']
 CTCF['CBS_SBS_strand'] = 'CBS' + CTCF['CBS_strand'].astype('str') + 'SBS' + CTCF['ZNF143_SBS_strand'].astype('str')
 # compute signal
 CTCF['CTCF_signal'] = bbi.stackup('ChIP_Nexus_rawdata/WT_CTCF_ChIP-nexus.adp.bam.bw', CTCF.chrom, CTCF.mid-100, CTCF.mid+100, bins=1, summary='mean')
 CTCF['ZNF143_signal'] = bbi.stackup('ChIP_Nexus_rawdata/WT_ZNF143_ChIP-nexus.adp.bam.bw', CTCF.chrom, CTCF.mid-100, CTCF.mid+100, bins=1, summary='mean')
 
-# save ZNF143_CBSNA_SBSNA
-CTCF[CTCF['total_has']=='ZNF143_CBSNA_SBSNA'].to_csv(path_or_buf='scrab_ucsc/ZNF143_CBSNA_SBSNA.CTCF.bed', sep='\t', header=True, index=False)
+# save CTCF
+CTCF.to_csv(path_or_buf='scrab_ucsc/CTCF.bed', sep='\t', header=True, index=False)
 
 # draw hue scatterplot of CTCF_signal and ZNF143_signal
 f, ax = matplotlib.pyplot.subplots()
@@ -350,7 +387,7 @@ f = seaborn.lmplot(data=CTCF, x='CTCF_signal', y='ZNF143_signal', hue='total_has
 f.set(xscale='log', yscale='log')
 f.savefig('results/playwith/CTCF_peak_type_regress.pdf')
 # bicluster according to CBS strand, SBS strand, ZNF143
-ZNF143_data = CTCF['ZNF143_name'].isna().astype('int64')
+ZNF143_data = (CTCF['ZNF143_per_']==0).astype('int64')
 CBS_strand_data = [1 if CS=='+' else -1 if CS=='-' else 0 for CS in CTCF['CBS_strand']]
 SBS_strand_data = [1 if SS=='+' else -1 if SS=='-' else 0 for SS in CTCF['ZNF143_SBS_strand']]
 data=pandas.DataFrame({'ZNF143' : ZNF143_data, 'CBS_strand' : CBS_strand_data, 'SBS_strand' : SBS_strand_data})
@@ -358,7 +395,7 @@ sys.setrecursionlimit(100000)
 f = seaborn.clustermap(data=data, standard_scale=1, cmap='bwr')
 f.savefig('results/playwith/annotation_bicluster.pdf')
 # motif shift hue plot, to get scatter version, remove kind="kde" and add marker="+", alpha=0.2
-f = seaborn.jointplot(x=CTCF['CBS_distance'].astype('float64'), y=CTCF['SBS_distance'].astype('float64'), hue=CTCF['CBS_SBS_strand'], kind='kde', xlim=[-60,60], ylim=[-100,100], dropna=True)
+f = seaborn.jointplot(x=CTCF['CBS_closest'].astype('float64'), y=CTCF['SBS_closest'].astype('float64'), hue=CTCF['CBS_SBS_strand'], kind='kde', xlim=[-60,60], ylim=[-100,100], dropna=True)
 f.savefig('results/playwith/CBS_SBS_orientation.pdf')
 
 ### extract motif from ZNF143_CBSNA_SBSNA.CTCF.bed
@@ -382,22 +419,44 @@ with open('tracks.ini', 'w') as f:
 pygenometracks.plotTracks.main(['--tracks', 'tracks.ini', '--region', 'chr11:9,480,000-9,552,000', '--outFileName', 'check_genome/hic_cover.pdf'])
 
 ### loop overlap
-loops1_file = 'hichip_results/WT_ZNF143_HiChIP/WT_ZNF143_HiChIP.filt.intra.loop_counts.bedpe'
-loops2_file = 'CD_ZNF143_loop.bedpe'
-loops1=bioframe.read_table(loops1_file, schema=['chrom1', 'start1', 'end1', 'chrom2', 'start2', 'end2', 'name', 'score'], sep=' ')
-loops2=bioframe.read_table(loops2_file, schema=['chrom1', 'start1', 'end1', 'chrom2', 'start2', 'end2', 'name', 'score'])
-loops1, loops2 = get_overlap_loops(loops1, loops2)
-loops1.to_csv(path_or_buf=f'results/loop_counts/{os.path.basename(loops1_file)}.expand', sep='\t', header=False, index=False)
-loops2.to_csv(path_or_buf=f'results/loop_counts/{os.path.basename(loops2_file)}.expand', sep='\t', header=False, index=False)
-names = ['WT_only', 'WT_half', 'over', 'CD_only', 'CD_half']
-counts = [sum(loops1['over']=='no'), sum(loops1['over']=='half'), len(loops1.loc[loops1['over']=='yes', 'comp'].unique()), sum(loops2['over']=='no'), sum(loops2['over']=='half')]
-data = pandas.DataFrame({'name' : names, 'count' : counts})
-f, ax = matplotlib.pyplot.subplots()
-seaborn.barplot(data=data, x='name', y='count', ax=ax)
-for p in ax.patches:
-    ax.text(p.get_x() + p.get_width()/2., p.get_height(), f'{int(p.get_height())}', ha="center", va="bottom") 
-f.savefig(f'results/loop_counts/{os.path.basename(loops1_file)}_{os.path.basename(loops2_file)}.overlap.count.pdf')
-matplotlib.pyplot.close(f)
+loops0_file = 'zmloops/AID_loop_counts.bedpe'
+loops1_file = 'zmloops/AID-CD_loop_counts.bedpe'
+loopss = [bioframe.read_table(file, schema=['chrom1', 'start1', 'end1', 'chrom2', 'start2', 'end2', 'name', 'score'], sep=' ') for file in [loops0_file, loops1_file]]
+loops_names = ['AID', 'AID-CD']
+CTCF = bioframe.read_table('ChIP_Nexus_results/AID_CTCF_ChIP-nexus_peaks.narrowPeak', schema='bed')
+ZNF143 = bioframe.read_table('ChIP_Nexus_results/AID_ZNF143_ChIP-nexus_peaks.narrowPeak', schema='bed')
+for i in range(len(loopss)):
+    loopss[i] = standard_assign(loopss[i], ZNF143, 'a1', 'ZNF143', select_col='distance', includes=[], select_mode='min', cols1=('chrom1', 'start1', 'end1'))
+    loopss[i] = standard_assign(loopss[i], ZNF143, 'a2', 'ZNF143', select_col='distance', includes=[], select_mode='min', cols1=('chrom2', 'start2', 'end2'))
+    loopss[i] = standard_assign(loopss[i], CTCF, 'a1', 'CTCF', select_col='distance', includes=[], select_mode='min', cols1=('chrom1', 'start1', 'end1'))
+    loopss[i] = standard_assign(loopss[i], CTCF, 'a2', 'CTCF', select_col='distance', includes=[], select_mode='min', cols1=('chrom2', 'start2', 'end2'))
+loopss[0], loopss[1] = get_overlap_loops(loopss[0], loopss[1])
+loopss[0].to_csv(path_or_buf=f'results/loop_counts/{os.path.basename(loops0_file)}.expand', sep='\t', header=False, index=False)
+loopss[1].to_csv(path_or_buf=f'results/loop_counts/{os.path.basename(loops1_file)}.expand', sep='\t', header=False, index=False)
+
+for fil in [None, 'ZZ', 'ZO', 'OO']:
+    if not fil:
+        mask0, mask1 = [True] * len(loopss[0]), [True] * len(loopss[1])
+    else:
+        if fil=='ZZ':
+            mask0, mask1 = (loopss[0]['CTCF_per_a1']==0) & (loopss[0]['CTCF_per_a2']==0), (loopss[1]['CTCF_per_a1']==0) & (loopss[1]['CTCF_per_a2']==0)
+        elif fil=='OO':
+            mask0, mask1 = (loopss[0]['CTCF_per_a1']>0) & (loopss[0]['CTCF_per_a2']>0), (loopss[1]['CTCF_per_a1']>0) & (loopss[1]['CTCF_per_a2']>0)
+        elif fil=='ZO':
+            mask0, mask1 = (loopss[0]['CTCF_per_a1']>0) & (loopss[0]['CTCF_per_a2']==0) | (loopss[0]['CTCF_per_a1']==0) & (loopss[0]['CTCF_per_a2']>0), (loopss[1]['CTCF_per_a1']>0) & (loopss[1]['CTCF_per_a2']==0) | (loopss[1]['CTCF_per_a1']==0) & (loopss[1]['CTCF_per_a2']>0)
+        else:
+            raise Exception("fil must be ZZ, ZO, OO")
+    loops0 = loopss[0][mask0]
+    loops1 = loopss[1][mask1]
+    names = [f'{loops_names[0]}_only', f'{loops_names[0]}_half', 'over', f'{loops_names[1]}_only', f'{loops_names[1]}_half']
+    counts = [sum(loops0['over']=='no'), sum(loops0['over']=='half'), len(loops0.loc[loops0['over']=='yes', 'comp'].unique()), sum(loops1['over']=='no'), sum(loops1['over']=='half')]
+    data = pandas.DataFrame({'name' : names, 'count' : counts})
+    f, ax = matplotlib.pyplot.subplots()
+    seaborn.barplot(data=data, x='name', y='count', ax=ax)
+    for p in ax.patches:
+        ax.text(p.get_x() + p.get_width()/2., p.get_height(), f'{int(p.get_height())}', ha="center", va="bottom") 
+    f.savefig(f'results/loop_counts/{os.path.basename(loops0_file)}_{os.path.basename(loops1_file)}.{fil}.overlap.count.pdf')
+    matplotlib.pyplot.close(f)
 
 ### run HiCPro
 hichip_filepairs = [[f"hichip_rawdata/{file}" for file in pair] for pair in [['WT_ZNF143_HiChIP_R1.fq.gz','WT_ZNF143_HiChIP_R2.fq.gz'], ['AID_ZNF143_HiChIP_R1.fq.gz','AID_ZNF143_HiChIP_R2.fq.gz'], ['AID-CD_ZNF143_HiChIP_R1.fq.gz','AID-CD_ZNF143_HiChIP_R2.fq.gz'], ['WT_ZNF143_HiChIP_rep1_R1.fq.gz','WT_ZNF143_HiChIP_rep1_R2.fq.gz'], ['WT_ZNF143_HiChIP_rep2_R1.fq.gz','WT_ZNF143_HiChIP_rep2_R2.fq.gz'], ['AID_ZNF143_HiChIP_rep1_R1.fq.gz','AID_ZNF143_HiChIP_rep1_R2.fq.gz'], ['AID_ZNF143_HiChIP_rep2_R1.fq.gz','AID_ZNF143_HiChIP_rep2_R2.fq.gz'], ['AID-CD_ZNF143_HiChIP_rep1_R1.fq.gz','AID-CD_ZNF143_HiChIP_rep1_R2.fq.gz'], ['AID-CD_ZNF143_HiChIP_rep2_R1.fq.gz','AID-CD_ZNF143_HiChIP_rep2_R2.fq.gz']]]
@@ -505,20 +564,6 @@ with open('hic_matrices/allValidPairs.ln', 'wb') as f:
 
 
 ### hist to MboI bins
-def count_loop_valid(file, loops, nbdige):
-    mat = cooler.Cooler(file).matrix(balance=False)
-    enzyme_count, a1cov, a2cov = [], [], []
-    for bin1_id, bin2_id in zip(loops['bin1_id'], loops['bin2_id']):
-        l1 = max(bin1_id-nbdige,0)
-        u1 = min(bin1_id+nbdige+1,len(dige))
-        l2 = max(bin2_id-nbdige,0)
-        u2 = min(bin2_id+nbdige+1,len(dige))
-        submat = mat[l1:u1,l2:u2]
-        enzyme_count.append(numpy.sum(submat))
-        a1cov.append(numpy.concatenate([[0]*(l1-bin1_id+nbdige), numpy.sum(submat, axis=1), [0]*(bin1_id+nbdige+1-u1)]))
-        a2cov.append(numpy.concatenate([[0]*(l2-bin2_id+nbdige), numpy.sum(submat, axis=0), [0]*(bin2_id+nbdige+1-u2)]))
-    return [enzyme_count, a1cov, a2cov]
-
 def get_group_greater_pvalues(data=None, filesWT=None, filesKO=None):
     if not isinstance(data,pandas.DataFrame):
         return ['ttest_ind','ranksums','nrm']
@@ -594,7 +639,7 @@ for loop_group in loop_groups:
         for nbdige in nbdiges:
             # count
             MboI_cool_files = ['hic_matrices_MboI/WT-rep1.MboI.cool', 'hic_matrices_MboI/WT-rep2.MboI.cool', 'hic_matrices_MboI/ZO1-rep1.MboI.cool', 'hic_matrices_MboI/ZO1-rep2.MboI.cool', 'hic_matrices_MboI/ZO2-rep1.MboI.cool', 'hic_matrices_MboI/ZO2-rep2.MboI.cool', 'hic_matrices_MboI/AID-rep1.MboI.cool', 'hic_matrices_MboI/AID-rep2.MboI.cool', 'hic_matrices_MboI/AID-CD-rep1.MboI.cool', 'hic_matrices_MboI/AID-CD-rep2.MboI.cool', 'hic_matrices_MboI/AID-ZO-rep1.MboI.cool', 'hic_matrices_MboI/AID-ZO-rep2.MboI.cool', 'hic_matrices_MboI/AID-ZOCD-rep1.MboI.cool', 'hic_matrices_MboI/AID-ZOCD-rep2.MboI.cool']
-            jobpacks = joblib.Parallel(n_jobs=len(MboI_cool_files))(joblib.delayed(count_loop_valid)(file, loops_all, nbdige) for file in MboI_cool_files)
+            jobpacks = joblib.Parallel(n_jobs=len(MboI_cool_files))(joblib.delayed(count_loop_valid)(file, loops_all, nbdige, len(dige)) for file in MboI_cool_files)
             for i, file in enumerate(MboI_cool_files):
                 loops_all[os.path.basename(file)] = jobpacks[i][0]
                 loops_all[f"{os.path.basename(file)}.a1cov"] = jobpacks[i][1]
@@ -729,6 +774,448 @@ for loop_group in loop_groups:
 arr1, arr2 = numpy.array([9226, 12571, 5915]), numpy.array([1609, 6442, 7199])
 chi2 = ljwlib.sundry.chi_square_two_multinomial_same(arr1, arr2)
 
+### pcdh cluster RNA-seq
+f, axs = matplotlib.pyplot.subplots(figsize=(10,10), nrows=3, ncols=1, sharex=True)
+rpkmss = {}
+for i, name in enumerate(['WT', 'ZO']):
+    rpkmss[name] = []
+    for suf in ['-rep1', '-rep2']:
+        rpkm = pandas.read_csv(f'single_cut_RNA/cufflink/{name}{suf}/genes.fpkm_tracking', sep='\t')
+        rpkm = rpkm[[(tid.startswith("PCDHA") or tid.startswith("PCDHB") or tid.startswith("PCDHG")) and not tid.endswith("P") for tid in rpkm['tracking_id']]]
+        rpkmss[name].append(rpkm)
+    rpkmss[name] = pandas.concat(rpkmss[name])
+    seaborn.barplot(data=rpkmss[name], x='tracking_id', y='FPKM', color='k', ax=axs[i])
+    for p in axs[i].patches:
+        axs[i].text(p.get_x() + p.get_width()/2., p.get_height(), f'{p.get_height(): .2f}', rotation=90, ha="center", va="bottom") 
+    axs[i].set(title=name)
+    # axs[i].tick_params(axis='x', rotation=90)
+rpkmdiff = pandas.DataFrame({'tracking_id' : rpkmss['WT']['tracking_id'].values, 'FPKM' : rpkmss['ZO']['FPKM'].values-rpkmss['WT']['FPKM'].values})
+seaborn.barplot(data=rpkmdiff, x='tracking_id', y='FPKM', color='k', ax=axs[2])
+for p, lab in zip(axs[2].patches, axs[2].get_xticklabels()):
+    hc, hp = p.get_height(), 0
+    vac, vap = "bottom", "top"
+    if p.get_height()<0:
+        hc, hp = hp, hc
+    axs[2].text(p.get_x() + p.get_width()/2., hc, f'{p.get_height(): .5f}', rotation=90, ha="center", va=vac)
+    pvalue = scipy.stats.ttest_ind(rpkmss['WT'].loc[rpkmss['WT']['tracking_id']==lab._text,'FPKM'].values, rpkmss['ZO'].loc[rpkmss['ZO']['tracking_id']==lab._text,'FPKM'].values, axis=0, nan_policy='omit', alternative='two-sided').pvalue
+    axs[2].text(p.get_x() + p.get_width()/2., hp, f'{pvalue: .5f}', rotation=90, ha="center", va=vap)
+axs[2].set(title='ZO-WT')
+axs[2].tick_params(axis='x', rotation=90)
+f.tight_layout()
+f.savefig(f'single_cut_RNA/fpkm.pdf')
+matplotlib.pyplot.close(f)
+
+
+
+### SBS loop based analysis
+extend = 2000
+loop_files = ['results/express_and_loop_strength/AID_loop_ZZ.bedpe', 'results/express_and_loop_strength/AID-CD_loop_ZZ.bedpe']
+fpkm_filess = [['single_cut_RNA/cufflink/AID/genes.fpkm_tracking','single_cut_RNA/cufflink/AID-ZO/genes.fpkm_tracking','single_cut_RNA/cufflink/AID-CD/genes.fpkm_tracking','single_cut_RNA/cufflink/AID-ZOCD/genes.fpkm_tracking']] * 2
+hic_filesss = [[['hic_matrices_MboI/AID-rep1.MboI.cool', 'hic_matrices_MboI/AID-rep2.MboI.cool'],['hic_matrices_MboI/AID-ZO-rep1.MboI.cool', 'hic_matrices_MboI/AID-ZO-rep2.MboI.cool'],['hic_matrices_MboI/AID-CD-rep1.MboI.cool', 'hic_matrices_MboI/AID-CD-rep2.MboI.cool'],['hic_matrices_MboI/AID-ZOCD-rep1.MboI.cool', 'hic_matrices_MboI/AID-ZOCD-rep2.MboI.cool']]] * 2
+H3K4me3_bwfiless = [['???','???']] * 2
+H3K27ac_files = ['results/express_and_loop_strength/H3K27ac_peaks.broadPeak'] * 2
+
+
+for loop_file, fpkm_files, hic_filess, H3K4me3_bwfiles, H3K27ac_file in zip(loop_files, fpkm_filess, hic_filesss, H3K4me3_bwfiless, H3K27ac_files):
+    loop = bioframe.read_table(loop_file, schema=['chrom1','start1','end1','chrom2','start2','end2','score'])
+    loopsecp = loop[['start1','end1','start2','end2']]
+    loop['start1'], loop['end1'] = (loop['start1'] + loop['end1'])//2-extend, (loop['start1'] + loop['end1'])//2+extend
+    loop['start2'], loop['end2'] = (loop['start2'] + loop['end2'])//2-extend, (loop['start2'] + loop['end2'])//2+extend
+
+    ## count hic
+    # dige = pandas.read_csv("MboI.bed", sep='\t')
+    # loop['mid1s'] = (loop['start1'] + loop['end1'])//2
+    # loop['mid1e'] = loop['mid1s'] +1
+    # loop['mid2s'] = (loop['start2'] + loop['end2'])//2
+    # loop['mid2e'] = loop['mid2s'] +1
+    # loop['bin1_id'] =  bioframe.closest(loop, dige, return_input=False, return_distance=False, return_index=True, cols1=['chrom1','mid1s','mid1e'])['index_'].astype('int64')
+    # loop['bin2_id'] =  bioframe.closest(loop, dige, return_input=False, return_distance=False, return_index=True, cols1=['chrom2','mid2s','mid2e'])['index_'].astype('int64')
+
+    # nbdige = 12
+    # with open('hic_matrices/allValidPairs.ln', 'rb') as f:
+    #     lns = pickle.load(f) 
+    # MboI_cool_files = [hic_file for hic_files in hic_filess for hic_file in hic_files]
+    # jobpacks = joblib.Parallel(n_jobs=len(MboI_cool_files))(joblib.delayed(count_loop_valid)(hic_file, loop, nbdige, len(dige)) for hic_file in MboI_cool_files)
+    # total_reads = {}
+    # for hic_files in hic_filess:
+    #     hic_name = os.path.commonprefix([os.path.basename(hic_file) for hic_file in hic_files])
+    #     loop[hic_name] = 0
+    #     total_reads[hic_name] = 0
+    #     for i, hic_file in enumerate(MboI_cool_files):
+    #         if hic_file in hic_files:
+    #             loop[hic_name] += jobpacks[i][0]
+    #             total_reads[hic_name] += lns[os.path.basename(file)]
+    #     loop[f'{hic_name}_norm'] = loop[hic_name]/total_reads[hic_name]*1e6
+
+    # start assign annoations here
+    # flank = 2000
+    # for H3K4me3_bwfile in H3K4me3_bwfiles:
+    #     loop[f'a1_{H3K4me3_bwfile}'] = bbi.stackup(H3K4me3_bwfile, loop['chrom1'], loop['start1']-flank, loop['end1']+flank, bins=1, summary='mean').flatten()
+    #     loop[f'a2_{H3K4me3_bwfile}'] = bbi.stackup(H3K4me3_bwfile, loop['chrom2'], loop['start2']-flank, loop['end2']+flank, bins=1, summary='mean').flatten()
+    #     loop[H3K4me3_bwfile] = loop[f'a1_{H3K4me3_bwfile}'] + loop[f'a2_{H3K4me3_bwfile}']
+
+    tss = get_tss('hg19.ncbiRefSeq.gtf.gz')
+    tss = tss.drop_duplicates(subset=['start'], ignore_index=True)
+    coding = bioframe.read_table('hg19_gene_id_name.bed', schema=['chrom', 'start', 'end', 'strand', 'name', 'gene_id', 'type'])
+    coding = coding[coding['type']=='protein_coding'].drop_duplicates(subset=['gene_id'], ignore_index=True)
+    tss = pandas.merge(tss, coding['gene_id'], on='gene_id', how='inner')
+    for fpkm_file in fpkm_files:
+        fpkm_name = os.path.basename(os.path.dirname(fpkm_file))
+        fpkm = pandas.read_csv(fpkm_file, sep='\t')[["gene_id",'FPKM']].groupby('gene_id')
+        sumFPKM = fpkm['FPKM'].sum().values
+        fpkm = fpkm.nth(0).reset_index()
+        fpkm['FPKM'] = sumFPKM
+        tss = pandas.merge(tss, fpkm[['gene_id', 'FPKM']], on='gene_id', how='left')
+        tss = tss.rename(columns={'FPKM' : f'FPKM_{fpkm_name}'}) 
+
+    for anchor, cols1 in zip(['a1','a2'],[('chrom1', 'start1', 'end1'),('chrom2', 'start2', 'end2')]):
+        includes = [f'FPKM_{os.path.basename(os.path.dirname(fpkm_file))}' for fpkm_file in fpkm_files]
+        loop = standard_assign(loop, tss, anchor, 'TSS', select_col='distance', includes=includes, select_mode='min', cols1=cols1)
+
+    for fpkm_file in fpkm_files:
+        fpkm_name = os.path.basename(os.path.dirname(fpkm_file))
+        loop[f'FPKM_{fpkm_name}'] = (loop[f'a1_TSS_FPKM_{fpkm_name}'].fillna(0.0) + loop[f'a2_TSS_FPKM_{fpkm_name}'].fillna(0.0))/2
+
+    H3K27ac = bioframe.read_table(H3K27ac_file, schema='bed')
+    loop = standard_assign(loop, H3K27ac, 'a1', 'H3K27ac', select_col='distance', includes=[], select_mode='min', cols1=('chrom1', 'start1', 'end1'))
+    loop = standard_assign(loop, H3K27ac, 'a2', 'H3K27ac', select_col='distance', includes=[], select_mode='min', cols1=('chrom2', 'start2', 'end2'))
+    # end assign annoations here
+
+    loop[['start1','end1','start2','end2']] = loopsecp
+    # loop.to_csv(f'{loop_file}.attach', sep='\t', index=False)
+
+    for fpkm_file in fpkm_files:
+        fpkm_name = os.path.basename(os.path.dirname(fpkm_file))
+        loop['a1_type'] = ['A' if not numpy.isnan(fpa) else 'I' if ta>0 else 'E' if ha>0 else 'O' for fpa, ta, ha in zip(loop[f'a1_TSS_FPKM_{fpkm_name}'], loop['TSS_per_a1'], loop['H3K27ac_per_a1'])]
+        loop['a2_type'] = ['A' if not numpy.isnan(fpa) else 'I' if ta>0 else 'E' if ha>0 else 'O' for fpa, ta, ha in zip(loop[f'a2_TSS_FPKM_{fpkm_name}'], loop['TSS_per_a2'], loop['H3K27ac_per_a2'])]
+        loop['a1_a2_type'] = ["_".join(sorted([a1t,a2t])) for a1t, a2t in zip(loop['a1_type'], loop['a2_type'])]
+        loop['a1_a2_type_collapse'] = ['P_P' if tp in ['A_A','A_I','I_I'] else 'E_P' if tp in ['A_E','E_I'] else 'O_P' if tp in ['I_O','A_O'] else tp for tp in loop['a1_a2_type']]
+
+        AI = numpy.concatenate([loop.loc[loop['a1_type']=='A','a1_type'].values, loop.loc[loop['a2_type']=='A','a2_type'].values, loop.loc[loop['a1_type']=='I','a1_type'].values, loop.loc[loop['a2_type']=='I','a2_type'].values])
+
+        f, ax = matplotlib.pyplot.subplots(figsize=(10,10))
+        seaborn.histplot(x=AI, stat='percent', ax=ax)
+        for p in ax.patches:
+            ax.text(p.get_x() + p.get_width()/2., p.get_height(), f'{p.get_height(): .2f}', ha="center", va="bottom")
+        f.savefig(f'results/express_and_loop_strength/{os.path.basename(loop_file)}.AI.pdf')
+        f.tight_layout()
+        matplotlib.pyplot.close(f)
+
+        for tycol in ['a1_a2_type', 'a1_a2_type_collapse']:
+            f, ax = matplotlib.pyplot.subplots(figsize=(10,10))
+            seaborn.histplot(data=loop, x=tycol, stat='percent', ax=ax)
+            for p in ax.patches:
+                ax.text(p.get_x() + p.get_width()/2., p.get_height(), f'{p.get_height(): .2f}', rotation=90, ha="center", va="bottom")
+            ax.tick_params(axis='x', rotation=90)
+            f.savefig(f'results/express_and_loop_strength/{os.path.basename(loop_file)}.{tycol}.pdf')
+            f.tight_layout()
+            matplotlib.pyplot.close(f)
+
+        with open('results/express_and_loop_strength/znf143_loop.fit.summary', 'w') as fw:
+            for types, name in zip([['A_A','A_I','I_I','A_E','E_I'],['A_A','A_I','I_I'],['A_E','E_I']],['pppe','pp','pe']):
+                for met in ['lin', 'log']:
+                    mask = loop['a1_a2_type'].isin(types)
+                    score = loop.loc[mask,'score'].values
+                    mean_FPKM = loop.loc[mask,f'FPKM_{fpkm_name}'].values
+                    if met=='log':
+                        score = numpy.log10(score)
+                        mean_FPKM = numpy.log10(mean_FPKM)
+                    regmask = (~numpy.isinf(score)) & (~numpy.isinf(mean_FPKM)) & (~numpy.isnan(score)) & (~numpy.isnan(mean_FPKM))
+                    score , mean_FPKM = score[regmask], mean_FPKM[regmask]
+                    slope, intercept, rvalue, pvalue, stderr = scatter_linearreg_cmap(score, mean_FPKM, f'results/express_and_loop_strength/znf143_loop.{name}.{met}.{fpkm_name}.pdf', alternative='greater')
+                    fw.write(f'znf143_loop.{name}.{met}.pdf\t{slope}\t{intercept}\t{rvalue}\t{pvalue}\t{stderr}\n')
+
+    # xs = ['mean_FPKM_WT','HiC_WT_norm']
+    # ys = ['mean_FPKM_ZO','HiC_ZO_norm']
+    # zs = ['score','score']
+    # for x, y, z in zip(xs, ys, zs):
+    #     f, ax = matplotlib.pyplot.subplots(figsize=(20,20))
+    #     ax.scatter(loop[x], loop[y], c=loop[z], cmap='bwr', alpha=0.2, norm=matplotlib.colors.Normalize(vmin=0, vmax=numpy.percentile(loop[z],90)))
+    #     ax.set(aspect=1)
+    #     xlim = ax.get_xlim()
+    #     ylim = ax.get_ylim()
+    #     xylim = [min(xlim[0],ylim[0]),max(xlim[1],ylim[1])]
+    #     ax.plot(xylim, xylim)
+    #     ax.tick_params(axis='x', rotation=90)
+    #     ax.set(xlim=xylim, ylim=xylim)
+    #     f.savefig(f'results/express_and_loop_strength/{os.path.basename(loop_file)}.{x}.{y}.{z}.pdf')
+    #     f.tight_layout()
+    #     matplotlib.pyplot.close(f)
+
+
+
+### tss based analysis
+fpkm_filess = [['single_cut_RNA/cufflink/WT/genes.fpkm_tracking','single_cut_RNA/cufflink/ZO/genes.fpkm_tracking']] * 3 + [['single_cut_RNA/cufflink/AID/genes.fpkm_tracking','single_cut_RNA/cufflink/AID-ZO/genes.fpkm_tracking','single_cut_RNA/cufflink/AID-CD/genes.fpkm_tracking','single_cut_RNA/cufflink/AID-ZOCD/genes.fpkm_tracking']] * 3
+H3K4me3_bwfiless = [['H3K4me3/RPKM/WT_RPKM.bw','H3K4me3/RPKM/ZO_RPKM.bw']] * 3 + [['???',"???"]] * 3
+loop_files = ['results/express_and_loop_strength/WT_loop_ZZ.bedpe', 'results/express_and_loop_strength/WT_loop_ZO.bedpe', 'results/express_and_loop_strength/WT_loop_OO.bedpe', 'results/express_and_loop_strength/CD_loop_ZZ.bedpe', 'results/express_and_loop_strength/CD_loop_ZO.bedpe', 'results/express_and_loop_strength/CD_loop_OO.bedpe']
+
+for fpkm_files, H3K4me3_bwfiles, loop_file in zip(fpkm_filess, H3K4me3_bwfiless, loop_files):
+    tss = get_tss('hg19.ncbiRefSeq.gtf.gz')
+    tss = tss.drop_duplicates(subset=['start'], ignore_index=True)
+    coding = bioframe.read_table('hg19_gene_id_name.bed', schema=['chrom', 'start', 'end', 'strand', 'name', 'gene_id', 'type'])
+    coding = coding[coding['type']=='protein_coding'].drop_duplicates(subset=['gene_id'], ignore_index=True)
+    tss = pandas.merge(tss, coding['gene_id'], on='gene_id', how='inner')
+    tss = tss[[chr.find('_')==-1 for chr in tss['chrom']]]
+
+    for fpkm_file in fpkm_files:
+        fpkm_name = os.path.basename(os.path.dirname(fpkm_file))
+        fpkm = pandas.read_csv(fpkm_file, sep='\t')[["gene_id",'FPKM']].groupby('gene_id')
+        sumFPKM = fpkm['FPKM'].sum().values
+        fpkm = fpkm.nth(0).reset_index()
+        fpkm['FPKM'] = sumFPKM
+        tss = pandas.merge(tss, fpkm[['gene_id', 'FPKM']], on='gene_id', how='left')
+        tss = tss.rename(columns={'FPKM' : f'FPKM_{fpkm_name}'})
+        tss[f'FPKM_{fpkm_name}'] = tss[f'FPKM_{fpkm_name}'].fillna(0.0)
+        tss[f'log_FPKM_{fpkm_name}'] = numpy.log10(tss[f'FPKM_{fpkm_name}']+1)
+
+    # flank = 2000
+    # for H3K4me3_bwfile in H3K4me3_bwfiles:
+    #     tss[H3K4me3_bwfile] = bbi.stackup(H3K4me3_bwfiles, tss['chrom'], tss['start']-flank, tss['end']+flank, bins=1, summary='mean').flatten()
+
+    # if len(fpkm_files)==2 and len(H3K4me3_bwfiles)==2:
+    #     H3K4me3_WmZ = tss[H3K4me3_bwfiles[1]]-tss[H3K4me3_bwfiles[0]]
+    #     fpkm_name0, fpkm_name1 = os.path.basename(os.path.dirname(fpkm_files[0])), os.path.basename(os.path.dirname(fpkm_files[1]))
+    #     FPKM_WmD = tss[f'FPKM_{fpkm_name1}']-tss[f'FPKM_{fpkm_name0}']
+    #     iso = sklearn.ensemble.IsolationForest()
+    #     yhat = iso.fit_predict(FPKM_WmD.values.reshape(-1,1))
+    #     H3K4me3_WmZ = H3K4me3_WmZ[yhat!=-1]
+    #     FPKM_WmD = FPKM_WmD[yhat!=-1]
+    #     _ = scatter_linearreg_cmap(H3K4me3_WmZ, FPKM_WmD, f'results/express_and_loop_strength/FPKM_2_H3K4me3.pdf', alternative='greater')
+
+    extend = 2000
+    loop = bioframe.read_table(loop_file, schema=['chrom1','start1','end1','chrom2','start2','end2','score'])
+    loop['start1'], loop['end1'] = (loop['start1'] + loop['end1'])//2-extend, (loop['start1'] + loop['end1'])//2+extend
+    loop['start2'], loop['end2'] = (loop['start2'] + loop['end2'])//2-extend, (loop['start2'] + loop['end2'])//2+extend
+
+    tss = standard_assign(tss, loop, '', 'a1', select_col='distance', includes=[], select_mode='min', cols2=('chrom1', 'start1', 'end1'))
+    tss = standard_assign(tss, loop, '', 'a2', select_col='distance', includes=[], select_mode='min', cols2=('chrom2', 'start2', 'end2'))
+    tss['anchor'] = ['ANC' if a1+a2>0 else 'NANC' for a1, a2 in zip(tss['a1_per_'], tss['a2_per_'])]
+
+    for ycol in ['FPKM', 'log_FPKM']:
+        ctc = [f"{ycol}_{os.path.basename(os.path.dirname(fpkm_file))}" for fpkm_file in fpkm_files]
+        for anchor in ['ANC', 'NANC']:
+            f, ax = matplotlib.pyplot.subplots(figsize=(20,20))
+            
+            seaborn.barplot(data=tss[tss['anchor']==anchor][ctc], ax=ax)
+            ylim = list(ax.get_ylim())
+            title = ""
+            for fpkm_file_pair in itertools.combinations(fpkm_files, 2):
+                fpkm_name0, fpkm_name1 = os.path.basename(os.path.dirname(fpkm_file_pair[0])), os.path.basename(os.path.dirname(fpkm_file_pair[1]))
+                pvalue = scipy.stats.ttest_rel(tss.loc[tss['anchor']==anchor,f'FPKM_{fpkm_name0}'], tss.loc[tss['anchor']==anchor,f'FPKM_{fpkm_name1}'], axis=0, nan_policy='omit').pvalue
+                title += f"{fpkm_name0}_{fpkm_name1}={pvalue:.5f}\n"
+            ax.set(title=title)
+            f.savefig(f'results/express_and_loop_strength/RNAseq.bar.{os.path.basename(loop_file)}.{ycol}.{anchor}.pdf')
+            matplotlib.pyplot.close(f)
+
+        f, ax = matplotlib.pyplot.subplots(figsize=(20,20))
+        seaborn.barplot(data=tss[ctc], ax=ax)
+        ylim = list(ax.get_ylim())
+        title = ""
+        for fpkm_file_pair in itertools.combinations(fpkm_files, 2):
+            fpkm_name0, fpkm_name1 = os.path.basename(os.path.dirname(fpkm_file_pair[0])), os.path.basename(os.path.dirname(fpkm_file_pair[1]))
+            pvalue = scipy.stats.ttest_rel(tss[f'FPKM_{fpkm_name0}'], tss[f'FPKM_{fpkm_name1}'], axis=0, nan_policy='omit').pvalue
+            title += f"{fpkm_name0}_{fpkm_name1}={pvalue:.5f}\n"
+        ax.set(title=title)
+        f.savefig(f'results/express_and_loop_strength/RNAseq.bar..{os.path.basename(loop_file)}.{ycol}.pdf')
+        matplotlib.pyplot.close(f)
+
+
+### H3K4me3 based analysis
+samples = ['WT', 'ZO', 'WT_rep1', 'WT_rep2', 'K2_rep1', 'K2_rep2', 'K45_rep1', 'K45_rep2']
+counts = {}
+H3K4me3s = {}
+for sample in samples:
+    H3K4me3s[sample] = bioframe.read_table(f'H3K4me3/peak/{sample}_peaks.narrowPeak', schema=['chrom','start','end','name','score','strand','signal','pvalue','qvalue'])
+    counts[sample]=len(H3K4me3s[sample])
+
+f, ax = matplotlib.pyplot.subplots(figsize=(10,10))
+seaborn.barplot(data=pandas.DataFrame(counts, index=[0]), ax=ax)
+for p in ax.patches:
+    ax.text(p.get_x() + p.get_width()/2., p.get_height(), f'{int(p.get_height())}', ha="center", va="bottom")
+WTK2p = scipy.stats.ttest_ind([counts['WT_rep1'],counts['WT_rep2']], [counts['K2_rep1'],counts['K2_rep2']]).pvalue
+WTK45p = scipy.stats.ttest_ind([counts['WT_rep1'],counts['WT_rep2']], [counts['K45_rep1'],counts['K45_rep2']]).pvalue
+ax.set(title=f"WTK2p={WTK2p:.5f}, WTK45p={WTK45p:.5f}")
+f.savefig(f'results/express_and_loop_strength/H3K4me3.count.pdf')
+matplotlib.pyplot.close(f)
+
+inter_counts = {}
+for spe in [['WT','ZO'],['ZO','WT']]:
+    inter_counts[f'{spe[0]}_inter'] = sum(standard_assign(H3K4me3s[spe[0]], H3K4me3s[spe[1]], '', spe[1], select_col='distance', includes=[], select_mode='min')[f'{spe[1]}_per_']>0)
+    inter_counts[f'{spe[0]}_only'] = counts[spe[0]] - inter_counts[f'{spe[0]}_inter']
+f, ax = matplotlib.pyplot.subplots(figsize=(10,10))
+seaborn.barplot(data=pandas.DataFrame(inter_counts, index=[0]), ax=ax)
+for p in ax.patches:
+    ax.text(p.get_x() + p.get_width()/2., p.get_height(), f'{int(p.get_height())}', ha="center", va="bottom")
+f.savefig(f'results/express_and_loop_strength/H3K4me3.inter.count.pdf')
+matplotlib.pyplot.close(f)
+
+extend = 2000
+loop_file = 'results/express_and_loop_strength/ZNF143_loop_ZZ.bedpe'
+loop = bioframe.read_table(loop_file, schema=['chrom1','start1','end1','chrom2','start2','end2','score'])
+loop['start1'], loop['end1'] = (loop['start1'] + loop['end1'])//2-extend, (loop['start1'] + loop['end1'])//2+extend
+loop['start2'], loop['end2'] = (loop['start2'] + loop['end2'])//2-extend, (loop['start2'] + loop['end2'])//2+extend
+
+for sample in samples:
+    H3K4me3s[sample] = standard_assign(H3K4me3s[sample], loop, '', 'a1', select_col='distance', includes=[], select_mode='min', cols2=('chrom1', 'start1', 'end1'))
+    H3K4me3s[sample] = standard_assign(H3K4me3s[sample], loop, '', 'a2', select_col='distance', includes=[], select_mode='min', cols2=('chrom2', 'start2', 'end2'))
+    H3K4me3s[sample]['anchor'] = ['ANC' if a1+a2>0 else 'NANC' for a1, a2 in zip(H3K4me3s[sample]['a1_per_'], H3K4me3s[sample]['a2_per_'])]
+
+for anchor in ['ALL', 'NANC', 'ANC']:
+    if anchor!='ALL':
+        subH3K4me3s = {}
+        for sample in samples:
+            subH3K4me3s[sample] = H3K4me3s[sample][H3K4me3s[sample]['anchor']==anchor]
+    else:
+        subH3K4me3s = H3K4me3s
+    sampleslong = []
+    slong = {'signal' : [], 'pvalue' : [], 'qvalue' : []}
+    for sample in samples:
+        sampleslong += [sample]*len(subH3K4me3s[sample])
+        for ycol in slong.keys():
+            slong[ycol] += subH3K4me3s[sample][ycol].values.tolist()
+
+    ycoldf = pandas.DataFrame({'sample' : sampleslong, 'signal' : slong['signal'], 'pvalue' : slong['pvalue'], 'qvalue' : slong['qvalue']})
+
+    for ycol in slong.keys():
+        f, ax = matplotlib.pyplot.subplots(figsize=(20,10))
+        seaborn.violinplot(data=ycoldf, x='sample', y=ycol, ax=ax)
+        WTZOp=scipy.stats.ttest_ind(subH3K4me3s['WT'][ycol].values.tolist(), subH3K4me3s['ZO'][ycol].values.tolist()).pvalue
+        WTK2p=scipy.stats.ttest_ind(subH3K4me3s['WT_rep1'][ycol].values.tolist()+subH3K4me3s['WT_rep2'][ycol].values.tolist(), subH3K4me3s['K2_rep1'][ycol].values.tolist()+subH3K4me3s['K2_rep2'][ycol].values.tolist()).pvalue
+        WTK45p=scipy.stats.ttest_ind(subH3K4me3s['WT_rep1'][ycol].values.tolist()+subH3K4me3s['WT_rep2'][ycol].values.tolist(), subH3K4me3s['K45_rep1'][ycol].values.tolist()+subH3K4me3s['K45_rep2'][ycol].values.tolist()).pvalue
+        WTKp=scipy.stats.ttest_ind(subH3K4me3s['WT_rep1'][ycol].values.tolist()+subH3K4me3s['WT_rep2'][ycol].values.tolist(), subH3K4me3s['K2_rep1'][ycol].values.tolist()+subH3K4me3s['K2_rep2'][ycol].values.tolist()+subH3K4me3s['K45_rep1'][ycol].values.tolist()+subH3K4me3s['K45_rep2'][ycol].values.tolist()).pvalue
+        ax.set(title=f"WTZOp={WTZOp}, WTK2p={WTK2p}, WTK45p={WTK45p}, WTKp={WTKp}")
+        f.savefig(f'results/express_and_loop_strength/H3K4me3.{anchor}.{ycol}.pdf')
+        matplotlib.pyplot.close(f)
+
+### Delta_ZNF143 Delta_CTCF
+loop = bioframe.read_table('AID_HiC_loop_domain/AID_loop.bedpe', schema=['chrom1', 'start1', 'end1', 'chrom2', 'start2', 'end2'])
+samples = ['AID','AID-ZO','AID-CD','AID-ZOCD']
+clrs, stacks = {}, {}
+for sample in samples:
+    clr = load_rename_add_normVec_cov_tot(f'hic_matrices/{sample}.allValidPairs.mcool', 10_000)
+    cvd = cooltools.expected_cis(clr=clr, view_df=hg19_arms, ignore_diags=0, nproc=4)
+    loop[f"HiC_{sample}"] = cooltools.pileup(clr, loop, view_df=hg19_arms, expected_df=cvd, flank=0, nproc=4).flatten()
+
+CTCF = bioframe.read_table('ChIP_Nexus_results/WT_CTCF_ChIP-nexus_peaks.narrowPeak', schema='bed')
+ZNF143 = bioframe.read_table('ChIP_Nexus_results/WT_ZNF143_ChIP-nexus_peaks.narrowPeak', schema='bed')
+loop = standard_assign(loop, ZNF143, 'a1', 'ZNF143', select_col='distance', includes=[], select_mode='min', cols1=('chrom1', 'start1', 'end1'))
+loop = standard_assign(loop, ZNF143, 'a2', 'ZNF143', select_col='distance', includes=[], select_mode='min', cols1=('chrom2', 'start2', 'end2'))
+loop = standard_assign(loop, CTCF, 'a1', 'CTCF', select_col='distance', includes=[], select_mode='min', cols1=('chrom1', 'start1', 'end1'))
+loop = standard_assign(loop, CTCF, 'a2', 'CTCF', select_col='distance', includes=[], select_mode='min', cols1=('chrom2', 'start2', 'end2'))
+
+loop['SBS'] = ['ESES' if za1>0 and za2>0 else 'NSNS' if za1==0 and za2==0 else 'ESNS' for za1, za2 in zip(loop['ZNF143_per_a1'], loop['ZNF143_per_a2'])]
+loop['CBS'] = ['ECEC' if ca1>0 and ca2>0 else 'NCNC' if ca1==0 and ca2==0 else 'ECNC' for ca1, ca2 in zip(loop['CTCF_per_a1'], loop['CTCF_per_a2'])]
+loop['SBS_CBS'] = loop['SBS'] + '_' + loop['CBS']
+loop['ALL'] = 'ALL'
+
+f, ax = matplotlib.pyplot.subplots(figsize=(20,20))
+seaborn.histplot(data=loop, x='SBS_CBS', ax=ax)
+for p in ax.patches:
+    ax.text(p.get_x() + p.get_width()/2., p.get_height(), f'{int(p.get_height())}', ha="center", va="bottom")
+f.savefig('results/AID_ZOCD/AID_ZOCD.loop.count.pdf')
+matplotlib.pyplot.close(f)
+
+for colcla in ['ALL', 'SBS_CBS', 'CBS']:
+    for type in loop[colcla].unique():
+        data = loop[loop[colcla]==type]
+        for pairxy in itertools.combinations(['HiC_AID','HiC_AID-CD','HiC_AID-ZOCD'], 2):
+            f, ax = matplotlib.pyplot.subplots(figsize=(20,20))
+            seaborn.scatterplot(data=data, x=pairxy[0], y=pairxy[1], hue='SBS_CBS', alpha=0.2, s=20, label='loop types', ax=ax)
+            ax.set(aspect=1)
+            xlim, ylim = ax.get_xlim(), ax.get_ylim()
+            xylim = [min(xlim[0],ylim[0]),max(xlim[1],ylim[1])]
+            ax.plot(xylim, xylim)
+            ax.tick_params(axis='x', rotation=90)
+            ax.set(xlim=xylim, ylim=xylim)
+            f.savefig(f'results/AID_ZOCD/AID_ZOCD.loop.express.{pairxy[0]}.{pairxy[1]}.{type}.pdf')
+            f.tight_layout()
+            matplotlib.pyplot.close(f)
+
+        f, ax = matplotlib.pyplot.subplots(figsize=(20,20))
+        seaborn.boxplot(data=data[[f"HiC_{sample}" for sample in samples]], ax=ax)
+        title = ""
+        for pairxy in itertools.combinations([f"HiC_{sample}" for sample in samples], 2):
+            pvalue = scipy.stats.ttest_rel(data[pairxy[0]], data[pairxy[1]], axis=0, nan_policy='omit', alternative='greater').pvalue
+            title += f"{pairxy[0]}_{pairxy[1]}={pvalue:.5f}, "
+        ax.set(title=title)
+        f.savefig(f'results/AID_ZOCD/AID_ZOCD.loop.express.box.{type}.pdf')
+        f.tight_layout()
+        matplotlib.pyplot.close(f)
+
+        f, ax = matplotlib.pyplot.subplots(figsize=(20,20))
+        seaborn.barplot(data=data[[f"HiC_{sample}" for sample in samples]], ax=ax)
+        for p in ax.patches:
+            ax.text(p.get_x() + p.get_width()/2., p.get_height(), f'{p.get_height():.5f}', ha="center", va="bottom")
+        title = ""
+        for pairxy in itertools.combinations(['HiC_AID','HiC_AID-CD','HiC_AID-ZOCD'], 2):
+            pvalue = scipy.stats.ttest_rel(data[pairxy[0]], data[pairxy[1]], axis=0, nan_policy='omit', alternative='greater').pvalue
+            title += f"{pairxy[0]}_{pairxy[1]}={pvalue:.5f}, "
+        ax.set(title=title)
+        f.savefig(f'results/AID_ZOCD/AID_ZOCD.loop.express.bar.{type}.pdf')
+        f.tight_layout()
+        matplotlib.pyplot.close(f)
+
+for colcla in ['ALL', 'SBS_CBS', 'CBS']:
+    for type in loop[colcla].unique():
+        data = loop[loop[colcla]==type]
+        for pairxy in itertools.combinations([f"HiC_{sample}" for sample in samples], 2):
+            f, ax = matplotlib.pyplot.subplots(figsize=(20,20))
+            seaborn.scatterplot(data=data, x=pairxy[0], y=pairxy[1], hue='SBS_CBS', alpha=0.2, s=20, label='loop types', ax=ax)
+            ax.set(aspect=1)
+            xlim, ylim = ax.get_xlim(), ax.get_ylim()
+            xylim = [min(xlim[0],ylim[0]),max(xlim[1],ylim[1])]
+            ax.plot(xylim, xylim)
+            ax.tick_params(axis='x', rotation=90)
+            ax.set(xlim=xylim, ylim=xylim)
+            f.savefig(f'results/AID_ZOCD/AID_ZOCD.loop.express.{pairxy[0]}.{pairxy[1]}.{type}.pdf')
+            f.tight_layout()
+            matplotlib.pyplot.close(f)
+
+### AID hichip loop
+
+with open('hic_matrices/allValidPairs.ln', 'rb') as f:
+    lns = pickle.load(f) 
+dige = pandas.read_csv('MboI.bed', sep='\t')
+CTCF = bioframe.read_table('ChIP_Nexus_results/AID_CTCF_ChIP-nexus_peaks.narrowPeak', schema='bed')
+ZNF143 = bioframe.read_table('ChIP_Nexus_results/AID_ZNF143_ChIP-nexus_peaks.narrowPeak', schema='bed')
+inter = True
+block_size = 40000
+nbdiges = [12]
+
+loop_groups = [['results/express_and_loop_strength/AID_loop_ZZ.bedpe','results/express_and_loop_strength/AID_loop_ZO.bedpe','results/express_and_loop_strength/AID_loop_OO.bedpe'], ['results/express_and_loop_strength/AID-CD_loop_ZZ.bedpe','results/express_and_loop_strength/AID-CD_loop_ZO.bedpe','results/express_and_loop_strength/AID-CD_loop_OO.bedpe']]
+
+for out_name, loop_group in zip(['AID','AID-CD'], loop_groups):
+    # get loop
+    loops_all = pandas.concat([bioframe.read_table(file, schema=['chrom1','start1','end1','chrom2','start2','end2','score']) for file in loop_group]).reset_index(drop=True)
+    # attach CTCF ZNF143
+    loops_all = standard_assign(loops_all, ZNF143, 'a1', 'ZNF143', select_col='distance', includes=[], select_mode='min', cols1=('chrom1', 'start1', 'end1'))
+    loops_all = standard_assign(loops_all, ZNF143, 'a2', 'ZNF143', select_col='distance', includes=[], select_mode='min', cols1=('chrom2', 'start2', 'end2'))
+    loops_all = standard_assign(loops_all, CTCF, 'a1', 'CTCF', select_col='distance', includes=[], select_mode='min', cols1=('chrom1', 'start1', 'end1'))
+    loops_all = standard_assign(loops_all, CTCF, 'a2', 'CTCF', select_col='distance', includes=[], select_mode='min', cols1=('chrom2', 'start2', 'end2'))
+    # # filter SBS only loops
+    # boolESES = (loops_all['ZNF143_per_a1']>0) & (loops_all['ZNF143_per_a2']>0)
+    # boolNCNC = (loops_all['CTCF_per_a1']==0) & (loops_all['CTCF_per_a2']==0)
+    # loops_all = loops_all[boolESES & boolNCNC].reset_index(drop=True)
+    # align to emzyme fragment
+    loops_all['mid1s'] = (loops_all['start1'] + loops_all['end1'])//2
+    loops_all['mid1e'] = loops_all['mid1s'] +1
+    loops_all['mid2s'] = (loops_all['start2'] + loops_all['end2'])//2
+    loops_all['mid2e'] = loops_all['mid2s'] +1
+    loops_all['bin1_id'] =  bioframe.closest(loops_all, dige, return_input=False, return_distance=False, return_index=True, cols1=['chrom1','mid1s','mid1e'])['index_'].astype('int64')
+    loops_all['bin2_id'] =  bioframe.closest(loops_all, dige, return_input=False, return_distance=False, return_index=True, cols1=['chrom2','mid2s','mid2e'])['index_'].astype('int64')
+    for nbdige in nbdiges:
+        # count
+        MboI_cool_files = ['hic_matrices_MboI/WT-rep1.MboI.cool', 'hic_matrices_MboI/WT-rep2.MboI.cool', 'hic_matrices_MboI/ZO1-rep1.MboI.cool', 'hic_matrices_MboI/ZO1-rep2.MboI.cool', 'hic_matrices_MboI/ZO2-rep1.MboI.cool', 'hic_matrices_MboI/ZO2-rep2.MboI.cool', 'hic_matrices_MboI/AID-rep1.MboI.cool', 'hic_matrices_MboI/AID-rep2.MboI.cool', 'hic_matrices_MboI/AID-CD-rep1.MboI.cool', 'hic_matrices_MboI/AID-CD-rep2.MboI.cool', 'hic_matrices_MboI/AID-ZO-rep1.MboI.cool', 'hic_matrices_MboI/AID-ZO-rep2.MboI.cool', 'hic_matrices_MboI/AID-ZOCD-rep1.MboI.cool', 'hic_matrices_MboI/AID-ZOCD-rep2.MboI.cool']
+        jobpacks = joblib.Parallel(n_jobs=len(MboI_cool_files)//2)(joblib.delayed(count_loop_valid2)(file, loops_all, nbdige, len(dige), block_size) for file in MboI_cool_files)
+        for i, file in enumerate(MboI_cool_files):
+            loops_all[os.path.basename(file)] = jobpacks[i][0]
+            # loops_all[f"{os.path.basename(file)}.a1cov"] = jobpacks[i][1]
+            # loops_all[f"{os.path.basename(file)}.a2cov"] = jobpacks[i][2]
+        for file in MboI_cool_files:
+            loops_all[f"{os.path.basename(file)}.norm"] = loops_all[os.path.basename(file)]/lns[os.path.basename(file)]*1e6
+        loops_all.to_csv(f'results/playwith/{out_name}.{nbdige}.loops.count', sep='\t', index=False)
+
+
 ### TADs analysis
 tadfile1 = '/media/ljw/f3b85364-e45d-4166-8db8-1cca425f188e1/HiC/output/TAD/WT_10000_iced.matrix_Domain_10Kb.bed'
 tadfile2 = '/media/ljw/f3b85364-e45d-4166-8db8-1cca425f188e1/HiC/output/TAD/ZO1_10000_iced.matrix_Domain_10Kb.bed'
@@ -747,24 +1234,37 @@ f.savefig('results/tads/pair_shifts.pdf')
 
 
 ### renbin call tads matlab
-# for file in files:
-for file in files[6:]:
+for file in files:
     ljwlib.tads.renbin_call_tads_matlab(file, binsize=10000, DIwindows=2000000, boundsizemin=3, boundthres=0.99)
 
-### renbin call tads domaincaller
+### renbin call tads domaincaller # pomegranate has been updated, but the min_cov in Normal is not implemented
 for file in files:
-    args = ['--uri', f'{file}::resolutions/10000', '--output', f'domaincaller/{os.path.basename(file)}.tads', '--DI-output', f'domaincaller/{os.path.basename(file)}.DIs', '--window-size', f'{2000000}', '--weight-col', 'weight', '--cpu-core', f'{12}', '--probs', f'{0.99}', '--minsize', f'{3}', '--logFile', f'domaincaller/{os.path.basename(file)}.log']
+    args = ['--uri', f'{file}::resolutions/10000', '--output', f'domaincaller_tads/{os.path.basename(file)}.tads', '--DI-output', f'domaincaller_tads/{os.path.basename(file)}.DIs', '--window-size', f'{2000000}', '--weight-col', 'weight', '--cpu-core', f'{12}', '--probs', f'{0.99}', '--minsize', f'{3}', '--logFile', f'domaincaller_tads/{os.path.basename(file)}.log']
     args, _ = domaincaller.renbin.getargs(args)
     domaincaller.renbin.call_tads(args)
 
 ### hictool call tads
+exclude = ['chrM', 'chrY']
+output_path = "hictool_tads"
+os.makedirs(os.path.join(output_path,"tmp"), exist_ok=True)
 for file in files:
     clr = load_rename_add_normVec_cov_tot(file, 10_000)
+    bins = clr.bins()[:][['chrom','start','end']]
+    bins = bins[[chrom not in exclude for chrom in bins['chrom']]]
+    DIs, hmm_states, domains = [], [], []
     for chr in clr.chromnames:
-        numpy.savetxt('hictools_tmp/tmp.matrix', clr.matrix().fetch(chr))
-        HiCtool.scripts.HiCtool_TAD_analysis_lib.hictools_call_tads(action='full_tad_analysis', input_file='hictools_tmp/tmp.matrix', chromSizes_path='HiCtool/scripts/chromSizes', isGlobal=False, tab_sep=True, chr=chr, species='hg19', data_type='normalized', full_chromosome=True, coord=None, input_file_hmm=None, plot_legend=True, plot_grid=True, bin_size=clr.binsize)
+        if chr not in exclude:
+            HiCtool.scripts.HiCtool_TAD_analysis_lib.hictools_call_tads(action='full_tad_analysis', contact_matrix_or_DI=numpy.nan_to_num(clr.matrix().fetch(chr), nan=0.0), chromSizes_path='HiCtool/scripts/chromSizes', isGlobal=False, tab_sep=True, chrs=[f"{chromindices[chr]+1}"], species='hg19', data_type='normalized', full_chromosome=True, coord=None, input_file_hmm=None, plot_legend=True, plot_grid=True, bin_size=clr.binsize, zero_threshold=0.1, output_path=os.path.join(output_path,"tmp"))
+            DIs.extend(numpy.loadtxt(os.path.join(output_path,"tmp",f"HiCtool_chr{chromindices[chr]+1}_DI.txt")).tolist())
+            hmm_states.extend(numpy.loadtxt(os.path.join(output_path,"tmp",f"HiCtool_chr{chromindices[chr]+1}_hmm_states.txt")).tolist())
+            domains.append(bioframe.read_table(os.path.join(output_path,"tmp",f"HiCtool_chr{chromindices[chr]+1}_topological_domains.txt"), schema=['start', 'end']))
+            domains[-1].insert(0, 'chrom', chr)
+    pandas.concat([bins, pandas.DataFrame({'DI' : DIs})], axis=1).to_csv(os.path.join(output_path,f"{os.path.basename(file)}.DI"), index=False, header=False, sep='\t', na_rep='nan')
+    pandas.concat([bins, pandas.DataFrame({'hmm_state' : hmm_states})], axis=1).to_csv(os.path.join(output_path,f"{os.path.basename(file)}.hmm"), index=False, header=False, sep='\t', na_rep='nan')
+    pandas.concat(domains).to_csv(os.path.join(output_path,f"{os.path.basename(file)}.dm"), index=False, header=False, sep='\t', na_rep='nan')
+shutil.rmtree(os.path.join(output_path,"tmp"))
 
-### tadtree call tads
+### tadtree call tads # extremely slow
 for file in files:
     clr = load_rename_add_normVec_cov_tot(file, 10_000)
     TADtree.TADtreelib.use_TADtree(clr, 'TADtree_tads', M=10, gamma=500)

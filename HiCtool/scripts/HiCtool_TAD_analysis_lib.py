@@ -236,8 +236,8 @@ def load_DI_values(input_file):
     fp = open(input_file,'r+')
     lines = fp.read().split('\n')
     lines = lines[:-1]
-    di_values = (np.nan_to_num(np.array(map(float, lines)))).tolist()
-    return di_values
+    
+    return np.nan_to_num(np.array([float(line) for line in lines])).tolist()
 
 
 def extract_single_map(input_global_matrix,
@@ -357,7 +357,8 @@ def calculate_chromosome_DI(input_contact_matrix,
                             data_type='normalized',
                             species='hg38',
                             save_file=True,
-                            bin_size=40000):
+                            bin_size=40000,
+                            output_path="tad_analysis"):
     """
     Function to calculate the DI values for a chromosome and save them 
     in a txt file.
@@ -400,7 +401,7 @@ def calculate_chromosome_DI(input_contact_matrix,
 
     # Calculation of the DI
     DI = [] # list of the DI for each bin
-    len_var = 2000000/bin_size # range of upstream or downstream bins to calculate DI
+    len_var = 2000000//bin_size # range of upstream or downstream bins to calculate DI
 
     for locus in range(n): # 'locus' refers to a bin
         if locus < len_var:
@@ -426,7 +427,7 @@ def calculate_chromosome_DI(input_contact_matrix,
             DI.append(di)
     
     if save_file == True:
-        save_list(DI, 'tad_analysis/HiCtool_chr' + a_chr + '_DI.txt')
+        save_list(DI, os.path.join(output_path, 'HiCtool_chr' + a_chr + '_DI.txt'))
     
     print("Done!")
     return DI
@@ -434,7 +435,9 @@ def calculate_chromosome_DI(input_contact_matrix,
     
 def calculate_chromosome_hmm_states(input_file_DI,
                                     a_chr,
-                                    save_file=True):
+                                    save_file=True,
+                                    zero_threshold=0.4,
+                                    output_path="tad_analysis"):
     """
     Function to calculate the HMM states (true DI values) for a chromosome and save 
     them in a txt file. It takes DI values as input.
@@ -467,7 +470,6 @@ def calculate_chromosome_hmm_states(input_file_DI,
     
     # Observed emissions                  
     emissions = []
-    zero_threshold = 0.4
     
     for i in range(0,len(A)):
         if A[i] >= zero_threshold:
@@ -476,9 +478,10 @@ def calculate_chromosome_hmm_states(input_file_DI,
             emissions.append(2)
         else:
             emissions.append(0)
-    
+
     # Hidden Markov Model with discrete emissions
-    model = hmm.MultinomialHMM(n_components=3, init_params="")
+    # model = hmm.MultinomialHMM(n_components=3, init_params="")
+    model = hmm.CategoricalHMM(n_components=3, n_features=3, init_params="") # the MultinomialHMM of old version is the CategoricalHMM of new version
     model.transmat_ = TRANS_GUESS
     model.emissionprob_ = EMISS_GUESS
     
@@ -491,7 +494,7 @@ def calculate_chromosome_hmm_states(input_file_DI,
     likelystates = likelystates_array.tolist()
     
     if save_file == True:
-        save_list(likelystates, "tad_analysis/HiCtool_chr" + a_chr + "_hmm_states.txt")
+        save_list(likelystates, os.path.join(output_path, "HiCtool_chr" + a_chr + "_hmm_states.txt"))
     
     print("Done!")
     return likelystates
@@ -508,8 +511,8 @@ def load_hmm_states(input_file):
     fp = open(input_file,'r+')
     lines = fp.read().split('\n')
     lines = lines[:-1]
-    likelystates = map(int,lines)
-    return likelystates
+    
+    return [int(line) for line in lines]
 
 
 def plot_chromosome_DI(input_file_DI, 
@@ -521,7 +524,8 @@ def plot_chromosome_DI(input_file_DI,
                        species='hg38',
                        plot_legend=True,
                        plot_grid=True,
-                       bin_size=40000):
+                       bin_size=40000,
+                       output_path="tad_analysis"):
     """
     Function to plot the DI and true DI values for a chromosome.
     Arguments:
@@ -605,7 +609,7 @@ def plot_chromosome_DI(input_file_DI,
         plt.grid(plot_grid)
         if plot_legend == True:
             plt.legend(prop={'size': 8})
-        plt.savefig("tad_analysis/HiCtool_chr" + a_chr + "_DI.pdf", format = 'pdf')
+        plt.savefig(os.path.join(output_path, "HiCtool_chr" + a_chr + "_DI.pdf"), format = 'pdf')
         print("Done!")
     
     else:
@@ -646,7 +650,7 @@ def plot_chromosome_DI(input_file_DI,
         plt.grid(plot_grid)
         if plot_legend == True:
             plt.legend(prop={'size': 8})
-        plt.savefig("tad_analysis/HiCtool_chr" + a_chr + "_DI_HMM.pdf", format = 'pdf')
+        plt.savefig(os.path.join(output_path, "HiCtool_chr" + a_chr + "_DI_HMM.pdf"), format = 'pdf')
         print("Done!")
 
 def save_topological_domains(a_matrix, output_file):
@@ -689,7 +693,8 @@ def load_topological_domains(input_file):
 
 def calculate_chromosome_topological_domains(input_file_hmm,
                                              a_chr,
-                                             bin_size=40000):
+                                             bin_size=40000,
+                                             output_path="tad_analysis"):
     """
     Function to calculate the topological domains coordinates of a chromosome. It takes the
     HMM states as input. Topological domains are stored in each line with tab separated start and end coordinates.
@@ -755,7 +760,7 @@ def calculate_chromosome_topological_domains(input_file_hmm,
         p2 = p1 + 1
         n2 = n1 + 1
     
-    save_topological_domains(np.matrix(topological_domains), "tad_analysis/HiCtool_chr" + a_chr + "_topological_domains.txt")
+    save_topological_domains(np.matrix(topological_domains), os.path.join(output_path, "HiCtool_chr" + a_chr + "_topological_domains.txt"))
     print("Done!")
     return topological_domains
 
@@ -768,7 +773,9 @@ def full_tad_analysis(input_contact_matrix,
                       data_type='normalized',
                       save_di=True,
                       save_hmm=True,
-                      bin_size = 40000):
+                      bin_size = 40000,
+                      zero_threshold=0.4,
+                      output_path="tad_analysis"):
     """
     Compute DI values, HMM states and topological domain coordinates for a chromosome.
     Arguments:
@@ -818,28 +825,31 @@ def full_tad_analysis(input_contact_matrix,
                                  data_type=data_type,
                                  species=species,
                                  save_file=save_di,
-                                 bin_size=bin_size)
+                                 bin_size=bin_size,
+                                 output_path=output_path)
     
     # HMM STATES
     HMM = calculate_chromosome_hmm_states(input_file_DI=DI,
                                           a_chr=a_chr,
-                                          save_file=save_hmm)
+                                          save_file=save_hmm,
+                                          zero_threshold=zero_threshold,
+                                          output_path=output_path)
     
     # TOPOLOGICAL DOMAIN COORDINATES
     tad = calculate_chromosome_topological_domains(input_file_hmm=HMM,
                                                    a_chr=a_chr,
-                                                   bin_size=bin_size)
+                                                   bin_size=bin_size,
+                                                   output_path=output_path)
     return tad
 
 
 
-def hictools_call_tads(action='full_tad_analysis', input_file=None, chromSizes_path=None, isGlobal=False, tab_sep=True, chr=None, species=None, data_type='normalized', full_chromosome=True, coord=None, input_file_hmm=None, plot_legend=True, plot_grid=True, bin_size=40000):
+def hictools_call_tads(action='full_tad_analysis', contact_matrix_or_DI=None, chromSizes_path=None, isGlobal=False, tab_sep=True, chrs=None, species=None, data_type='normalized', full_chromosome=True, coord=None, input_file_hmm=None, plot_legend=True, plot_grid=True, bin_size=40000, zero_threshold=0.4, output_path="tad_analysis"):
     
     if species + ".chrom.sizes" not in os.listdir(chromSizes_path):
         available_species = ', '.join([x.split('.')[0] for x in  os.listdir(chromSizes_path)])
         raise Exception('Wrong species inserted! Check the species spelling or insert an available species: ' + available_species + '. If your species is not listed, please contact Riccardo Calandrelli at <rcalandrelli@eng.ucsd.edu>.')
     
-    output_path = "tad_analysis"
     if not path.exists(output_path):
         os.mkdir(output_path)
     
@@ -857,29 +867,25 @@ def hictools_call_tads(action='full_tad_analysis', input_file=None, chromSizes_p
         else:
             pass
         
-        chr_list = map(str, chr.strip('[]').split(','))
-        
         if isGlobal == False:
-            if len(chr_list) > 1:
+            if len(chrs) > 1:
                 raise Exception('To perform the analysis on multiple chromosomes you must insert a global all-by-all chromosomes matrix.')
             else:
                 pass
-            
-        if tab_sep == False:
-            contact_matrix = load_matrix(input_file)
-        else:
-            contact_matrix = load_matrix_tab(input_file)
         
-        for c in chr_list:
+        for c in chrs:
             print("Performing TAD analysis on chr" + c + " ...")
-            full_tad_analysis(contact_matrix,
+            full_tad_analysis(contact_matrix_or_DI,
                               c,
                               isGlobal,
                               tab_sep,
-                              species,
-                              data_type,
-                              True,
-                              True)
+                              species=species,
+                              data_type=data_type,
+                              save_di=True,
+                              save_hmm=True,
+                              bin_size=bin_size,
+                              zero_threshold=zero_threshold,
+                              output_path=output_path)
             print("Done!")
     
 
@@ -890,20 +896,18 @@ def hictools_call_tads(action='full_tad_analysis', input_file=None, chromSizes_p
         else:
             pass
         
-        chr_list = map(str, chr.strip('[]').split(','))
-        if  len(chr_list) > 1:
+        if  len(chrs) > 1:
             raise Exception("Only a single chromosome is accepted if action is plot_chromosome_DI!")
         
         if full_chromosome == False:
-            coord = map(int, coord.strip('[]').split(','))
             start_pos = coord[0]
             end_pos = coord[1]
         else:
             start_pos = 0
             end_pos = 0
         
-        plot_chromosome_DI(input_file, 
-                           chr,
+        plot_chromosome_DI(contact_matrix_or_DI, 
+                           chrs[0],
                            full_chromosome,
                            start_pos, 
                            end_pos,
@@ -911,4 +915,5 @@ def hictools_call_tads(action='full_tad_analysis', input_file=None, chromSizes_p
                            species,
                            plot_legend,
                            plot_grid,
-                           bin_size=bin_size)
+                           bin_size=bin_size,
+                           output_path="tad_analysis")

@@ -7,8 +7,10 @@ hg19_arms = bioframe.sort_bedframe(hg19_arms, view_df = bioframe.make_viewframe(
 genome = bioframe.load_fasta('/home/ljw/hg19_with_random/hg19.fa')
 
 ### convert validpairs to .hic and .mcool
-def vp2hicmcool(pair_file, hicpro2juicebox='/home/ljw/bin/HiC-Pro-master/bin/utils/hicpro2juicebox.sh', chromsizesfile='/home/ljw/hg19_with_bowtie2_index/hg19.chrom.sizes'):
-    subprocess.check_output(f'bash {hicpro2juicebox} -i {pair_file} -o {os.path.dirname(pair_file)} -g <(grep -v "chr.*_" {chromsizesfile} | sort -k1,1V) -j juicer_tools_1.22.01.jar', shell=True)
+def vp2hicmcool(pair_file, hicpro2juicebox='/home/ljw/HiC-Pro_3.1.0/bin/utils/hicpro2juicebox.sh', chromsizesfile='/home/ljw/hg19_with_bowtie2_index/hg19.chrom.sizes', juicer_tools='/media/ljw/f3b85364-e45d-4166-8db8-1cca425f188e1/zhangmo/zmlib/juicer_tools_1.22.01.jar'):
+    subprocess.check_output(f'grep -v "chr.*_" {chromsizesfile} | sort -k1,1V > tmpsortchr', shell=True)
+    subprocess.check_output(f'bash {hicpro2juicebox} -i {pair_file} -o {os.path.dirname(pair_file)} -g tmpsortchr -j {juicer_tools}', shell=True)
+    os.remove('tmpsortchr')
     subprocess.check_output(f'hic2cool convert {pair_file}.hic {pair_file}.mcool', shell=True)
 
 ### load and pre-process of cooler
@@ -259,10 +261,10 @@ def average_trans_frequency(clr, output, *args, **kwargs):
 
 
 ### insulation boundaries
-def tads_strength(clr, window, output):
+def tads_strength(clr, window, output, ignore_diags=2, threshold="Li", clr_weight_name="weight"):
     os.makedirs(output, exist_ok=True)
 
-    insulation_table = cooltools.insulation(clr, [window], ignore_diags=2)
+    insulation_table = cooltools.insulation(clr, [window], ignore_diags=ignore_diags, threshold=threshold, clr_weight_name=clr_weight_name)
 
     f, ax = matplotlib.pyplot.subplots(sharex=True, figsize=(8,8), constrained_layout=True)
     ax.hist(insulation_table[f'boundary_strength_{window}'], bins=10**numpy.linspace(-4,1,200), histtype='step', lw=1, label=f'Window {window}')
@@ -311,11 +313,11 @@ def boundary_signal(clr, window, bwfile, insulation_table, threshold_li, thresho
     f.savefig(os.path.join(output, f'{os.path.basename(clr.filename)}.{clr.binsize}.{window}.{os.path.basename(bwfile)}.ctcf_pileup.pdf'))
     matplotlib.pyplot.close(f)
 
-def draw_region_tads(clr, region, window, insulation_table, output, *args, **kwargs):
-    os.makedirs(output, exist_ok=True)
+def draw_region_tads(clr, region, window, insulation_table, outfile, balance=False, ratio=1, display_weak=False, ylim=None, *args, **kwargs):
+    os.makedirs(os.path.dirname(outfile), exist_ok=True)
 
     start_pos_vector = numpy.arange(region[1], region[2]+1, clr.binsize)
-    matrix_c = clr.matrix().fetch(region)
+    matrix_c = clr.matrix(balance=balance).fetch(region)
     matrix_a = numpy.dot(numpy.array([(i[1], i[0]) for i in itertools.product(start_pos_vector[::-1], start_pos_vector)]), numpy.array([[1, 0.5], [-1, 0.5]]))
     x = matrix_a[:, 1].reshape(len(start_pos_vector), len(start_pos_vector))
     y = matrix_a[:, 0].reshape(len(start_pos_vector), len(start_pos_vector))
@@ -323,7 +325,7 @@ def draw_region_tads(clr, region, window, insulation_table, output, *args, **kwa
     f, ax = matplotlib.pyplot.subplots(figsize=(18, 6))
     im = ax.pcolormesh(x, y, numpy.flipud(matrix_c), *args, **kwargs)
     im.set_rasterized(True)
-    ax.set(aspect=0.5, xlim=[region[1], region[2]], ylim=[0, 10*window])
+    ax.set(aspect=0.5, xlim=[region[1], region[2]], ylim=[0, int((region[2]-region[1])*ratio)//window*window])
     ax.yaxis.set(major_formatter=matplotlib.ticker.EngFormatter('b'))
     ax.xaxis.set_visible(False)
 
@@ -332,18 +334,21 @@ def draw_region_tads(clr, region, window, insulation_table, output, *args, **kwa
     f.colorbar(im, cax=cax)
 
     insul_region = bioframe.select(insulation_table, region)
-    # weak_boundaries = insul_region[~insul_region[f'is_boundary_{window}']]
+    if display_weak:
+        weak_boundaries = insul_region[~insul_region[f'is_boundary_{window}']]
     strong_boundaries = insul_region[insul_region[f'is_boundary_{window}']]
 
     cax = divider.append_axes("bottom", size="50%", pad=0., sharex=ax)
-    # cax.scatter(weak_boundaries[['start', 'end']].mean(axis=1), weak_boundaries[f'log2_insulation_score_{window}'], label=f'Weak {window} boundaries')
+    if display_weak:
+        cax.scatter(weak_boundaries[['start', 'end']].mean(axis=1), weak_boundaries[f'log2_insulation_score_{window}'], label=f'Weak {window} boundaries')
     strong_poses = strong_boundaries[['start', 'end']].mean(axis=1).values
     strong_scores = strong_boundaries[f'log2_insulation_score_{window}'].values
     cax.scatter(strong_poses, strong_scores, label=f'Strong {window} boundaries')
     for sp, sc in zip(strong_poses, strong_scores):
-        ax.text(sp, sc, f'{sc:.2f}', ha="center", va="bottom") 
+        cax.text(sp, sc, f'{sc:.2f}', ha="center", va="bottom") 
     cax.plot(insul_region[['start', 'end']].mean(axis=1), insul_region[f'log2_insulation_score_{window}'], label=f'Window {window} bp')
-    cax.set(ylabel=f'log2_insulation_score_{window}')
+    cax.set(ylabel=f'log2_insulation_score_{window}', ylim=ylim)
+    cax.tick_params(axis='x', rotation=90)
     cax.xaxis.set(major_formatter=matplotlib.ticker.EngFormatter('b'))
     cax.legend()
 
@@ -362,7 +367,7 @@ def draw_region_tads(clr, region, window, insulation_table, output, *args, **kwa
         ax.plot([now, (now+post)/2], [0, post-now], c='k', lw=1)
     
     f.tight_layout()
-    f.savefig(os.path.join(output, f'{os.path.basename(clr.filename)}.{clr.binsize}.{region}.{window}.tads.pdf'))
+    f.savefig(outfile)
     matplotlib.pyplot.close(f)
 
 
@@ -454,7 +459,7 @@ def standard_assign(peak1, peak2, peak1_name, peak2_name, select_col='distance',
     peak1 = peak1.copy()
     peak1_peak2 = bioframe.overlap(peak1, peak2, suffixes=('_1','_2'), cols1=cols1, cols2=cols2, return_index=True)
     peak1_peak2['distance_2'] = (peak1_peak2[f'{cols2[1]}_2'] + peak1_peak2[f'{cols2[2]}_2'] - peak1_peak2[f'{cols1[1]}_1'] - peak1_peak2[f'{cols1[2]}_1']) // 2
-    peak1[f'{peak2_name}/{peak1_name}'] = peak1_peak2.groupby(["index_1"])["index_2"].count().values
+    peak1[f'{peak2_name}_per_{peak1_name}'] = peak1_peak2.groupby(["index_1"])["index_2"].count().values
     if select_col in ['pvalue']:
         peak1_peak2['tmp'] = peak1_peak2[f'{select_col}_2'].fillna(-1.0)
     elif select_col in ['distance']:
@@ -471,7 +476,7 @@ def standard_assign(peak1, peak2, peak1_name, peak2_name, select_col='distance',
         mid1 = pandas.DataFrame({'mid' : (peak1.loc[mask1chr,cols1[1]].values + peak1.loc[mask1chr,cols1[2]].values) // 2}).sort_values(by='mid')
         mid2 = pandas.DataFrame({'mid' : (peak2.loc[mask2chr,cols2[1]].values + peak2.loc[mask2chr,cols2[2]].values) // 2}).sort_values(by='mid')
         mid2['pos'] = mid2['mid']
-        tmp = pandas.merge_asof(mid1, mid2, on='mid', direction='nearest')
+        tmp = pandas.merge_asof(mid1, mid2, on='mid', direction='nearest').set_index(mid1.index).sort_index()
         peak1.loc[mask1chr, f'{peak1_name}_{peak2_name}_closest'.lstrip('_')] = tmp.pos.values - tmp.mid.values
 
     return peak1
@@ -479,10 +484,10 @@ def standard_assign(peak1, peak2, peak1_name, peak2_name, select_col='distance',
 ### get tss information from gtf
 def get_tss(gtffile):
     genes = bioframe.read_table(gtffile, schema='gtf')
+    genes.loc[genes.chrom=='chrMT', 'chrom'] = 'chrM'
     tss_start = [row.start if row.strand=='+' else row.end for row in genes[genes.feature=='transcript'].itertuples()]
     gene_id = [row.attributes.split(';')[0].split()[1].strip('"') for row in genes[genes.feature=='transcript'].itertuples()]
     transcript_id = [row.attributes.split(';')[1].split()[1].strip('"') for row in genes[genes.feature=='transcript'].itertuples()]
-    tss.loc[tss.chrom=='chrMT', 'chrom'] = 'chrM'
     tss = pandas.DataFrame({'chrom' : genes[genes.feature=='transcript'].chrom, 'start' : tss_start, 'end' : numpy.array(tss_start)+1, 'name' : transcript_id, 'score' : '.', 'strand' : genes[genes.feature=='transcript'].strand, 'gene_id' : gene_id})
 
     return tss
@@ -589,12 +594,73 @@ def call_motifs(peak_file, pwm_files):
         result['name_m'] = result.index.astype('str')
         result.name_m = [f'{os.path.basename(pwm_file)}_{id}' for id in result.name_m]
         
-        motif_files.append(f'{pwm_file}.motifs')
+        motif_files.append(f'{pwm_file}.{os.path.basename(peak_file)}.motifs')
         result[['chrom', 'start_m', 'end_m', 'name_m', 'score_m', 'strand_m', 'pvalue', 'qvalue']].to_csv(path_or_buf=motif_files[-1], sep='\t', header=False, index=False)
     
     return motif_files
 
+### used to get hic interactions at loops
+def count_loop_valid(file, loops, nbdige, len_dige):
+    mat = cooler.Cooler(file).matrix(balance=False)
+    enzyme_count, a1cov, a2cov = [], [], []
+    for bin1_id, bin2_id in zip(loops['bin1_id'], loops['bin2_id']):
+        l1 = max(bin1_id-nbdige,0)
+        u1 = min(bin1_id+nbdige+1,len_dige)
+        l2 = max(bin2_id-nbdige,0)
+        u2 = min(bin2_id+nbdige+1,len_dige)
+        submat = mat[l1:u1,l2:u2]
+        enzyme_count.append(numpy.sum(submat))
+        a1cov.append(numpy.concatenate([[0]*(l1-bin1_id+nbdige), numpy.sum(submat, axis=1), [0]*(bin1_id+nbdige+1-u1)]))
+        a2cov.append(numpy.concatenate([[0]*(l2-bin2_id+nbdige), numpy.sum(submat, axis=0), [0]*(bin2_id+nbdige+1-u2)]))
+    return [enzyme_count, a1cov, a2cov]
 
+def count_loop_valid2(file, loops, nbdige, len_dige, block_size=20000):
+    clr = cooler.Cooler(file)
+    loops = loops.copy()
+    loops['bin1_id_block'] = loops['bin1_id'] // block_size
+    loops['bin2_id_block'] = loops['bin2_id'] // block_size
+    enzyme_counts_all, a1covs_all, a2covs_all = numpy.zeros(len(loops)), numpy.zeros([len(loops),2*nbdige+1]), numpy.zeros([len(loops),2*nbdige+1])
+    for index, group in loops.groupby(['bin1_id_block','bin2_id_block']):
+        bin1_id_block, bin2_id_block = index
+        block_l1 = max(bin1_id_block*block_size-nbdige, 0)
+        block_u1 = min((bin1_id_block+1)*block_size+nbdige, len_dige)
+        block_l2 = max(bin2_id_block*block_size-nbdige, 0)
+        block_u2 = min((bin2_id_block+1)*block_size+nbdige, len_dige)
+        mat_block = clr.matrix(balance=False)[block_l1:block_u1,block_l2:block_u2]
+        enzyme_counts, a1covs, a2covs = [], [], []
+        for bin1_id, bin2_id in zip(group['bin1_id'], group['bin2_id']):
+            l1 = max(bin1_id-block_l1-nbdige,0)
+            u1 = min(bin1_id-block_l1+nbdige+1,block_u1-block_l1)
+            l2 = max(bin2_id-block_l2-nbdige,0)
+            u2 = min(bin2_id-block_l2+nbdige+1,block_u2-block_l2)
+            submat = mat_block[l1:u1,l2:u2]
+            enzyme_counts.append(numpy.sum(submat))
+            a1covs.append(numpy.concatenate([[0]*(l1-bin1_id+block_l1+nbdige), numpy.sum(submat, axis=1), [0]*(bin1_id-block_l1+nbdige+1-u1)]))
+            a2covs.append(numpy.concatenate([[0]*(l2-bin2_id+block_l2+nbdige), numpy.sum(submat, axis=0), [0]*(bin2_id-block_l2+nbdige+1-u2)]))
+        enzyme_counts_all[group.index] = enzyme_counts
+        a1covs_all[group.index] = a1covs
+        a2covs_all[group.index] = a2covs
+    return [enzyme_counts_all, a1covs_all, a2covs_all]
+
+### draw scatter with linear regression and cmap
+def scatter_linearreg_cmap(x, y, outfile, alternative='two-sided', *args, **kwargs):
+    slope, intercept, r, p, stderr = scipy.stats.linregress(x, y, alternative=alternative) 
+    f, ax = matplotlib.pyplot.subplots(figsize=(20,20))
+    ax.scatter(x, y, *args, **kwargs)
+    xlim = numpy.array(ax.get_xlim())
+    ylim = numpy.array(ax.get_ylim())
+    ax.plot(xlim, intercept+xlim*slope)
+    ax.text(xlim[1]*0.7, ylim[1]*0.9, f"slope={slope:.5f}")
+    ax.text(xlim[1]*0.7, ylim[1]*0.85, f"intercept={intercept:.5f}")
+    ax.text(xlim[1]*0.7, ylim[1]*0.8, f"r={r:.5f}")
+    ax.text(xlim[1]*0.7, ylim[1]*0.75, f"pvalue={p:.5f}")
+    ax.text(xlim[1]*0.7, ylim[1]*0.7, f"stderr={stderr:.5f}")
+    ax.set(xlim=xlim, ylim=ylim)
+    ax.tick_params(axis='x', rotation=90)
+    f.savefig(outfile)
+    f.tight_layout()
+    matplotlib.pyplot.close(f)
+    return slope, intercept, r, p, stderr
 
 
 

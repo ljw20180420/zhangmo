@@ -6,7 +6,7 @@ Created on Sun May 22 14:37:37 2016
 @author: wxt
 
 """
-import argparse, sys, logging, logging.handlers, traceback, numpy, domaincaller
+import argparse, sys, logging, logging.handlers, numpy, domaincaller
 
 currentVersion = domaincaller.__version__
 

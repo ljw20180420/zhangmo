@@ -1,14 +1,13 @@
 import cooler, logging
 from domaincaller.chromLev import Chrom, extract_matrix
 import numpy as np
-from pomegranate import NormalDistribution, HiddenMarkovModel, GeneralMixtureModel
+from pomegranate.gmm import GeneralMixtureModel
+from pomegranate.distributions import Normal
+from pomegranate.hmm import DenseHMM
 
 log = logging.getLogger(__name__)
 
 ### define the induced class of NormalDistribution which has a nonzero minimal standard deviation
-class NormalDistributionMinStd(NormalDistribution):
-    def __init__(self, mean, std, frozen=False, min_std=1e-6):
-        super().__init__(mean, std, frozen=frozen, min_std=min_std)
 
 class Genome(object):
     
@@ -36,15 +35,14 @@ class Genome(object):
         """
         # GMM emissions
         # 3 Hidden States:
-        # 0--downstream (right boundary), 1--no bias, 2--upstream (left boundary)
+        # 0--downstream (right boundary), 1--no bias, 2--upstream (left boundary)        
 
-        training_data = []
-        for DIs in self.training_data:
-            training_data.extend(DIs)
-        training_data = np.array(training_data).reshape(-1,1)
+        model = GeneralMixtureModel([Normal(min_cov=1e-6)]*3*numdists, max_iter=500)
+        model.fit(np.concatenate(self.training_data).reshape(-1,1).astype(np.float32))
 
-        model = GeneralMixtureModel.from_samples(NormalDistributionMinStd, 3*numdists, training_data, max_iterations=500)
-        mus = np.array([distri.parameters[0] for distri in model.distributions])
+        breakpoint()
+
+        mus = np.array([distri.means[0] for distri in model.distributions])
         idx = np.argsort(mus)
         weight = model.weights[idx].reshape(3, numdists)
         starts = np.sum(weight, 1)
@@ -63,7 +61,7 @@ class Genome(object):
             [0.33, 0.34, 0.33],
             [0.33, 0.33, 0.34]]
 
-        hmm = HiddenMarkovModel.from_matrix(A, dists, starts, state_names=['0', '1', '2'], name='mixture{0}'.format(numdists))
+        hmm = DenseHMM.from_matrix(A, dists, starts, state_names=['0', '1', '2'], name='mixture{0}'.format(numdists))
         
         return hmm
         
