@@ -1,21 +1,24 @@
-import requests, gzip, os, bioframe, numpy, scipy
+import requests, gzip, os, bioframe, numpy, scipy, math
+
+
 
 ### download something
-file='https://hgdownload.cse.ucsc.edu/goldenpath/hg19/bigZips/genes/hg19.ncbiRefSeq.gtf.gz'
+# file='https://hgdownload.cse.ucsc.edu/goldenpath/hg19/bigZips/genes/hg19.ncbiRefSeq.gtf.gz'
+file='https://www.dropbox.com/s/mjmtwn4pdgydkny/granule_love2.tif.zip?dl=1'
 r = requests.get(file)
 with open(os.path.basename(file), 'wb') as f:
     f.write(r.content)
 
-# decompress version
-r = requests.get('https://hgdownload.cse.ucsc.edu/goldenpath/hg19/bigZips/genes/hg19.ensGene.gtf.gz')
-with open("./hg19.ensGene.gtf", 'wb') as f:
-    f.write(gzip.decompress(r.content))
+# # decompress version
+# r = requests.get('https://hgdownload.cse.ucsc.edu/goldenpath/hg19/bigZips/genes/hg19.ensGene.gtf.gz')
+# with open("./hg19.ensGene.gtf", 'wb') as f:
+#     f.write(gzip.decompress(r.content))
 
-### digest genome
-genome = bioframe.load_fasta('/home/ljw/hg19_with_random/hg19.fa')
-emzyme = 'MboI'
-bins = bioframe.digest(genome, emzyme)
-bins.to_csv(path_or_buf=f'{emzyme}.bed', sep='\t', header=True, index=False)
+# ### digest genome
+# genome = bioframe.load_fasta('/home/ljw/hg19_with_random/hg19.fa')
+# emzyme = 'MboI'
+# bins = bioframe.digest(genome, emzyme)
+# bins.to_csv(path_or_buf=f'{emzyme}.bed', sep='\t', header=True, index=False)
 
 ### nested repeated measure
 def nested_repeated_measure(df, colgroups):
@@ -43,5 +46,5 @@ def chi_square_two_multinomial_same(arr1, arr2):
     d0 = (arr1 + arr2) / (s1 + s2)
     E1, E2= s1 * d0, s2 * d0
     chi2 = numpy.sum((arr1 - E1)**2 / E1) + numpy.sum((arr2 - E2)**2 / E2)
-    # return 1 - scipy.stats.chi2.logsf(chi2, len(arr1)-1)
-    return chi2
+    return math.e**scipy.stats.chi2.logsf(chi2, len(arr1)-1)
+    # return numpy.log10(math.e)*scipy.stats.chi2.logsf(chi2, len(arr1)-1)

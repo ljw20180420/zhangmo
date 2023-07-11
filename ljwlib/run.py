@@ -39,6 +39,28 @@ for file in files:
         compartmentalization(clr, genome, chr, 'results/compartment', cmap='bwr', norm=matplotlib.colors.Normalize(vmin=-0.5,vmax=0.5))
         saddle_plots(clr, genome, chr, 'results/saddle', vmin=-2, vmax=2, norm=matplotlib.colors.LogNorm(vmin=1e-1,vmax=1e1), cmap='bwr')
 
+### slide correlation of compartments
+# loop_file = 'zmloops/AID_loop_ZZ.bedpe'
+file = "hic_matrices/AID.allValidPairs.hic"
+binsize = 25000
+clr = load_rename_add_normVec_cov_tot(f"{file[-3]}mcool", binsize)
+file = file[-5]
+chr = "chr1"
+subprocess.check_output(f"java -jar juicer_tools_1.22.01.jar dump oe SCALE {file} {chr} {chr} BP {binsize} results/slide_correlation/{os.path.basename(file)}.{chr}", shell=True)
+spamat = bioframe.read_table(f"results/slide_correlation/{os.path.basename(file)}.{chr}", schema=['start', 'end', 'count'])
+spamat['bin1id'] = spamat['start']//binsize + 1
+spamat['bin2id'] = spamat['end']//binsize + 1
+spamat.reindex(columns=['bin1id', 'bin2id', 'count']).to_csv(f"results/slide_correlation/{os.path.basename(file)}.{chr}.sparse", index=False, header=False, sep='\t')
+bins = clr.bins().fetch(chr)[['chrom', 'start', 'end']]
+bins['binid'] = bins.index + 1
+bins.to_csv(f'results/slide_correlation/{os.path.basename(file)}.{chr}.bed', index=False, header=False, sep='\t')
+subprocess.check_output(f"python zmlib/sparseToDense.py -b results/slide_correlation/{os.path.basename(file)}.{chr}.bed results/slide_correlation/{os.path.basename(file)}.{chr}.sparse -o results/slide_correlation/{os.path.basename(file)}.{chr}.dense", shell=True)
+denmat = numpy.loadtxt(f"results/slide_correlation/{os.path.basename(file)}.{chr}.dense")
+for vmax in range(1,10,1):
+    f, ax, _ = binheat(denmat, bins, norm=matplotlib.colors.Normalize(vmin=0,vmax=vmax), cmap="Oranges")
+    f.savefig(f"results/slide_correlation/{os.path.basename(file)}.{chr}.{vmax}.oe.pdf")
+
+
 ### print P(s) for chromosomes
 for file in files:
     clr = load_rename_add_normVec_cov_tot(file, 10_000)
@@ -320,7 +342,7 @@ for ZNF143_wildtype_peak_file in ZNF143_wildtype_peak_files:
 ZNF143_pwm_files = ['motifs/ZNF143_type1.txt','motifs/ZNF143_type2.txt','motifs/ZNF143_type3.txt']
 ZNF143_wildtype_peak_files = ['ChIP_Nexus_results/WT_ZNF143_ChIP-nexus_peaks.narrowPeak','ChIP_Nexus_results/AID_ZNF143_ChIP-nexus_peaks.narrowPeak']
 ZNF143_peak_filess = [['ChIP_Nexus_results/WT_ZNF143_ChIP-nexus_peaks.narrowPeak'],['ChIP_Nexus_results/AID_ZNF143_ChIP-nexus_peaks.narrowPeak','ChIP_Nexus_results/AID-CD_ZNF143_ChIP-nexus_peaks.narrowPeak']]
-ZNF143_HiChIP_loop_filess = [['zmloops/WT_loop.bedpe'], ['zmloops/AID_loop_counts.bedpe', 'zmloops/AID-CD_loop_counts.bedpe']]
+ZNF143_HiChIP_loop_filess = [['zmloops/WT_loop.bedpe'], ['zmloops/AID_loop_ZZ.bedpe', 'zmloops/AID-CD_loop_ZZ.bedpe']]
 for ZNF143_wildtype_peak_file, ZNF143_peak_files, ZNF143_HiChIP_loop_files in zip(ZNF143_wildtype_peak_files, ZNF143_peak_filess, ZNF143_HiChIP_loop_filess):
     SBS = pandas.concat([bioframe.read_table(f"{ZNF143_pwm_file}.{os.path.basename(ZNF143_wildtype_peak_file)}.motifs", schema=['chrom', 'start', 'end', 'name', 'score', 'strand', 'pvalue', 'qvalue']) for ZNF143_pwm_file in ZNF143_pwm_files])
     for ZNF143_peak_file in ZNF143_peak_files:
@@ -419,10 +441,13 @@ with open('tracks.ini', 'w') as f:
 pygenometracks.plotTracks.main(['--tracks', 'tracks.ini', '--region', 'chr11:9,480,000-9,552,000', '--outFileName', 'check_genome/hic_cover.pdf'])
 
 ### loop overlap
-loops0_file = 'zmloops/AID_loop_counts.bedpe'
-loops1_file = 'zmloops/AID-CD_loop_counts.bedpe'
+extend = 2000
+fpkm_files = ['single_cut_RNA/cufflink/AID/genes.fpkm_tracking','single_cut_RNA/cufflink/AID-CD/genes.fpkm_tracking']
+loops0_file = 'zmloops/AID_loop_ZZ.bedpe'
+loops1_file = 'zmloops/AID-CD_loop_ZZ.bedpe'
 loopss = [bioframe.read_table(file, schema=['chrom1', 'start1', 'end1', 'chrom2', 'start2', 'end2', 'name', 'score'], sep=' ') for file in [loops0_file, loops1_file]]
-loops_names = ['AID', 'AID-CD']
+
+# assign ctcf znf143 to anchor
 CTCF = bioframe.read_table('ChIP_Nexus_results/AID_CTCF_ChIP-nexus_peaks.narrowPeak', schema='bed')
 ZNF143 = bioframe.read_table('ChIP_Nexus_results/AID_ZNF143_ChIP-nexus_peaks.narrowPeak', schema='bed')
 for i in range(len(loopss)):
@@ -430,33 +455,124 @@ for i in range(len(loopss)):
     loopss[i] = standard_assign(loopss[i], ZNF143, 'a2', 'ZNF143', select_col='distance', includes=[], select_mode='min', cols1=('chrom2', 'start2', 'end2'))
     loopss[i] = standard_assign(loopss[i], CTCF, 'a1', 'CTCF', select_col='distance', includes=[], select_mode='min', cols1=('chrom1', 'start1', 'end1'))
     loopss[i] = standard_assign(loopss[i], CTCF, 'a2', 'CTCF', select_col='distance', includes=[], select_mode='min', cols1=('chrom2', 'start2', 'end2'))
-loopss[0], loopss[1] = get_overlap_loops(loopss[0], loopss[1])
-loopss[0].to_csv(path_or_buf=f'results/loop_counts/{os.path.basename(loops0_file)}.expand', sep='\t', header=False, index=False)
-loopss[1].to_csv(path_or_buf=f'results/loop_counts/{os.path.basename(loops1_file)}.expand', sep='\t', header=False, index=False)
 
-for fil in [None, 'ZZ', 'ZO', 'OO']:
-    if not fil:
-        mask0, mask1 = [True] * len(loopss[0]), [True] * len(loopss[1])
-    else:
-        if fil=='ZZ':
-            mask0, mask1 = (loopss[0]['CTCF_per_a1']==0) & (loopss[0]['CTCF_per_a2']==0), (loopss[1]['CTCF_per_a1']==0) & (loopss[1]['CTCF_per_a2']==0)
-        elif fil=='OO':
-            mask0, mask1 = (loopss[0]['CTCF_per_a1']>0) & (loopss[0]['CTCF_per_a2']>0), (loopss[1]['CTCF_per_a1']>0) & (loopss[1]['CTCF_per_a2']>0)
-        elif fil=='ZO':
-            mask0, mask1 = (loopss[0]['CTCF_per_a1']>0) & (loopss[0]['CTCF_per_a2']==0) | (loopss[0]['CTCF_per_a1']==0) & (loopss[0]['CTCF_per_a2']>0), (loopss[1]['CTCF_per_a1']>0) & (loopss[1]['CTCF_per_a2']==0) | (loopss[1]['CTCF_per_a1']==0) & (loopss[1]['CTCF_per_a2']>0)
-        else:
-            raise Exception("fil must be ZZ, ZO, OO")
-    loops0 = loopss[0][mask0]
-    loops1 = loopss[1][mask1]
-    names = [f'{loops_names[0]}_only', f'{loops_names[0]}_half', 'over', f'{loops_names[1]}_only', f'{loops_names[1]}_half']
-    counts = [sum(loops0['over']=='no'), sum(loops0['over']=='half'), len(loops0.loc[loops0['over']=='yes', 'comp'].unique()), sum(loops1['over']=='no'), sum(loops1['over']=='half')]
-    data = pandas.DataFrame({'name' : names, 'count' : counts})
-    f, ax = matplotlib.pyplot.subplots()
-    seaborn.barplot(data=data, x='name', y='count', ax=ax)
-    for p in ax.patches:
-        ax.text(p.get_x() + p.get_width()/2., p.get_height(), f'{int(p.get_height())}', ha="center", va="bottom") 
-    f.savefig(f'results/loop_counts/{os.path.basename(loops0_file)}_{os.path.basename(loops1_file)}.{fil}.overlap.count.pdf')
-    matplotlib.pyplot.close(f)
+# get overlap information
+loopss[0], loopss[1] = get_overlap_loops(loopss[0], loopss[1])
+
+# # get fpkm for tss
+# tss = get_tss('hg19.ncbiRefSeq.gtf.gz')
+# tss = tss.drop_duplicates(subset=['start'], ignore_index=True)
+# coding = bioframe.read_table('hg19_gene_id_name.bed', schema=['chrom', 'start', 'end', 'strand', 'name', 'gene_id', 'type'])
+# coding = coding[coding['type']=='protein_coding'].drop_duplicates(subset=['gene_id'], ignore_index=True)
+# tss = pandas.merge(tss, coding['gene_id'], on='gene_id', how='inner')
+# for fpkm_file in fpkm_files:
+#     fpkm_name = os.path.basename(os.path.dirname(fpkm_file))
+#     fpkm = pandas.read_csv(fpkm_file, sep='\t')[["gene_id",'FPKM']].groupby('gene_id')
+#     sumFPKM = fpkm['FPKM'].sum().values
+#     fpkm = fpkm.nth(0).reset_index()
+#     fpkm['FPKM'] = sumFPKM
+#     tss = pandas.merge(tss, fpkm[['gene_id', 'FPKM']], on='gene_id', how='left')
+#     tss = tss.rename(columns={'FPKM' : f'FPKM_{fpkm_name}'}) 
+
+# # assign fpkm to anchor
+# for i in range(len(loopss)):
+#     includes = [f'FPKM_{os.path.basename(os.path.dirname(fpkm_file))}' for fpkm_file in fpkm_files]
+#     loopsecp = loopss[i][['start1','end1','start2','end2']]
+#     loopss[i]['start1'], loopss[i]['end1'] = (loopss[i]['start1'] + loopss[i]['end1'])//2-extend, (loopss[i]['start1'] + loopss[i]['end1'])//2+extend
+#     loopss[i]['start2'], loopss[i]['end2'] = (loopss[i]['start2'] + loopss[i]['end2'])//2-extend, (loopss[i]['start2'] + loopss[i]['end2'])//2+extend
+#     loopss[i] = standard_assign(loopss[i], tss, 'a1', 'TSS', select_col='distance', includes=includes, select_mode='min', cols1=('chrom1', 'start1', 'end1'))
+#     loopss[i] = standard_assign(loopss[i], tss, 'a2', 'TSS', select_col='distance', includes=includes, select_mode='min', cols1=('chrom2', 'start2', 'end2'))
+#     loopss[i][['start1','end1','start2','end2']] = loopsecp
+
+# assign ctcf to loop span
+shrink = 2000
+for i in range(len(loopss)):
+    span_starts, span_ends = [], []
+    for span_start, span_end in zip((loopss[i]['start1']+loopss[i]['end1'])//2+shrink, (loopss[i]['start2']+loopss[i]['end2'])//2-shrink):
+        if span_start>=span_end:
+            tmp = (span_start + span_end) // 2
+            span_start, span_end = tmp, tmp+1
+        span_starts.append(span_start)
+        span_ends.append(span_end)
+    loopss[i]['span_start'] = span_starts
+    loopss[i]['span_end'] = span_ends
+    loopss[i] = standard_assign(loopss[i], CTCF, 'span', 'ctcf', select_col='distance', includes=[], select_mode='min', cols1=('chrom1', 'span_start', 'span_end'))
+    loopss[i]['span_ctcf'] = ['ctcf' if cps > 0 else 'noctcf' for cps in loopss[i]['ctcf_per_span']]
+
+loops_names = ['AID', 'AID-CD']
+arrs = {}
+for i in range(len(loopss)):
+    for gp in [['yes'], ['no','half']]:
+        data = loopss[i][loopss[i]['over'].isin(gp)]
+        f, ax = matplotlib.pyplot.subplots(figsize=(10,10))
+        seaborn.histplot(data=data, x='span_ctcf', ax=ax)
+        arrs[f"{loops_names[i]}.{gp}"] = []
+        for patch in ax.patches:
+            ax.text(patch.get_x() + patch.get_width()/2., patch.get_height(), f'{int(patch.get_height())}', ha="center", va="bottom")
+            arrs[f"{loops_names[i]}.{gp}"].append(int(patch.get_height()))
+        f.savefig(f'results/loop_counts/middle_ctcf.{loops_names[i]}.{gp}.pdf')
+        matplotlib.pyplot.close(f)
+
+title = ""
+for key1, key2 in itertools.combinations(arrs.keys(), 2):
+    pvalue = ljwlib.sundry.chi_square_two_multinomial_same(numpy.array(arrs[key1]), numpy.array(arrs[key2]))
+    title += f"{key1}|{key2}={pvalue:.10f}\n"
+
+for i in range(len(loopss)):
+    for gp in [['yes'], ['no','half']]:
+        data = loopss[i][loopss[i]['over'].isin(gp)]
+        f, ax = matplotlib.pyplot.subplots(figsize=(10,10))
+        seaborn.histplot(data=data, x='span_ctcf', stat='percent', ax=ax)
+        arrs[f"{loops_names[i]}.{gp}"] = []
+        for patch in ax.patches:
+            ax.text(patch.get_x() + patch.get_width()/2., patch.get_height(), f'{int(patch.get_height())}', ha="center", va="bottom")
+            arrs[f"{loops_names[i]}.{gp}"].append(int(patch.get_height()))
+        ax.set(title=title)
+        f.savefig(f'results/loop_counts/middle_ctcf.{loops_names[i]}.{gp}.percent.pdf')
+        matplotlib.pyplot.close(f)
+
+# loopss[0].to_csv(path_or_buf=f'results/loop_counts/{os.path.basename(loops0_file)}.expand', sep='\t', header=True, index=False)
+# loopss[1].to_csv(path_or_buf=f'results/loop_counts/{os.path.basename(loops1_file)}.expand', sep='\t', header=True, index=False)
+
+# for loop_file in [loops0_file, loops1_file]:
+#     for sbs in [['yes'],['no'],['half'],['no','half'],['yes','no','half']]:
+#         loops = pandas.read_csv(f'results/loop_counts/{os.path.basename(loop_file)}.expand', sep='\t')
+#         loops = loops[loops['over'].isin(sbs)]
+#         loops['FPKM_AID'] = loops['a1_TSS_FPKM_AID'].fillna(0.) + loops['a2_TSS_FPKM_AID'].fillna(0.)
+#         loops['FPKM_AID-CD'] = loops['a1_TSS_FPKM_AID-CD'].fillna(0.) + loops['a2_TSS_FPKM_AID-CD'].fillna(0.)
+#         loops = loops[loops['FPKM_AID']+loops['FPKM_AID-CD']>0]
+#         pvalue = scipy.stats.ttest_rel(loops['FPKM_AID'], loops['FPKM_AID-CD'], alternative='greater').pvalue
+#         f, ax = matplotlib.pyplot.subplots(figsize=(20,20))
+#         seaborn.barplot(data=loops[['FPKM_AID','FPKM_AID-CD']], ax=ax)
+#         for patch in ax.patches:
+#             ax.text(patch.get_x() + patch.get_width()/2., patch.get_height(), f'{patch.get_height():.5f}', ha="center", va="bottom") 
+#         ax.set(title=f'pvalue={pvalue}')
+#         f.savefig(f'results/loop_counts/{os.path.basename(loop_file)}.{sbs}.fpkm.comp.pdf')
+#         matplotlib.pyplot.close(f)
+
+# for fil in [None, 'ZZ', 'ZO', 'OO']:
+#     if not fil:
+#         mask0, mask1 = [True] * len(loopss[0]), [True] * len(loopss[1])
+#     else:
+#         if fil=='ZZ':
+#             mask0, mask1 = (loopss[0]['CTCF_per_a1']==0) & (loopss[0]['CTCF_per_a2']==0), (loopss[1]['CTCF_per_a1']==0) & (loopss[1]['CTCF_per_a2']==0)
+#         elif fil=='OO':
+#             mask0, mask1 = (loopss[0]['CTCF_per_a1']>0) & (loopss[0]['CTCF_per_a2']>0), (loopss[1]['CTCF_per_a1']>0) & (loopss[1]['CTCF_per_a2']>0)
+#         elif fil=='ZO':
+#             mask0, mask1 = (loopss[0]['CTCF_per_a1']>0) & (loopss[0]['CTCF_per_a2']==0) | (loopss[0]['CTCF_per_a1']==0) & (loopss[0]['CTCF_per_a2']>0), (loopss[1]['CTCF_per_a1']>0) & (loopss[1]['CTCF_per_a2']==0) | (loopss[1]['CTCF_per_a1']==0) & (loopss[1]['CTCF_per_a2']>0)
+#         else:
+#             raise Exception("fil must be ZZ, ZO, OO")
+#     loops0 = loopss[0][mask0]
+#     loops1 = loopss[1][mask1]
+#     names = [f'{loops_names[0]}_only', f'{loops_names[0]}_half', 'over', f'{loops_names[1]}_only', f'{loops_names[1]}_half']
+#     counts = [sum(loops0['over']=='no'), sum(loops0['over']=='half'), len(loops0.loc[loops0['over']=='yes', 'comp'].unique()), sum(loops1['over']=='no'), sum(loops1['over']=='half')]
+#     data = pandas.DataFrame({'name' : names, 'count' : counts})
+#     f, ax = matplotlib.pyplot.subplots()
+#     seaborn.barplot(data=data, x='name', y='count', ax=ax)
+#     for patch in ax.patches:
+#         ax.text(patch.get_x() + patch.get_width()/2., patch.get_height(), f'{int(patch.get_height())}', ha="center", va="bottom") 
+#     f.savefig(f'results/loop_counts/{os.path.basename(loops0_file)}_{os.path.basename(loops1_file)}.{fil}.overlap.count.pdf')
+#     matplotlib.pyplot.close(f)
 
 ### run HiCPro
 hichip_filepairs = [[f"hichip_rawdata/{file}" for file in pair] for pair in [['WT_ZNF143_HiChIP_R1.fq.gz','WT_ZNF143_HiChIP_R2.fq.gz'], ['AID_ZNF143_HiChIP_R1.fq.gz','AID_ZNF143_HiChIP_R2.fq.gz'], ['AID-CD_ZNF143_HiChIP_R1.fq.gz','AID-CD_ZNF143_HiChIP_R2.fq.gz'], ['WT_ZNF143_HiChIP_rep1_R1.fq.gz','WT_ZNF143_HiChIP_rep1_R2.fq.gz'], ['WT_ZNF143_HiChIP_rep2_R1.fq.gz','WT_ZNF143_HiChIP_rep2_R2.fq.gz'], ['AID_ZNF143_HiChIP_rep1_R1.fq.gz','AID_ZNF143_HiChIP_rep1_R2.fq.gz'], ['AID_ZNF143_HiChIP_rep2_R1.fq.gz','AID_ZNF143_HiChIP_rep2_R2.fq.gz'], ['AID-CD_ZNF143_HiChIP_rep1_R1.fq.gz','AID-CD_ZNF143_HiChIP_rep1_R2.fq.gz'], ['AID-CD_ZNF143_HiChIP_rep2_R1.fq.gz','AID-CD_ZNF143_HiChIP_rep2_R2.fq.gz']]]
@@ -945,9 +1061,9 @@ for loop_file, fpkm_files, hic_filess, H3K4me3_bwfiles, H3K27ac_file in zip(loop
 
 
 ### tss based analysis
-fpkm_filess = [['single_cut_RNA/cufflink/WT/genes.fpkm_tracking','single_cut_RNA/cufflink/ZO/genes.fpkm_tracking']] * 3 + [['single_cut_RNA/cufflink/AID/genes.fpkm_tracking','single_cut_RNA/cufflink/AID-ZO/genes.fpkm_tracking','single_cut_RNA/cufflink/AID-CD/genes.fpkm_tracking','single_cut_RNA/cufflink/AID-ZOCD/genes.fpkm_tracking']] * 3
-H3K4me3_bwfiless = [['H3K4me3/RPKM/WT_RPKM.bw','H3K4me3/RPKM/ZO_RPKM.bw']] * 3 + [['???',"???"]] * 3
-loop_files = ['results/express_and_loop_strength/WT_loop_ZZ.bedpe', 'results/express_and_loop_strength/WT_loop_ZO.bedpe', 'results/express_and_loop_strength/WT_loop_OO.bedpe', 'results/express_and_loop_strength/CD_loop_ZZ.bedpe', 'results/express_and_loop_strength/CD_loop_ZO.bedpe', 'results/express_and_loop_strength/CD_loop_OO.bedpe']
+fpkm_filess = [['single_cut_RNA/cufflink/AID/genes.fpkm_tracking','single_cut_RNA/cufflink/AID-ZO/genes.fpkm_tracking','single_cut_RNA/cufflink/AID-CD/genes.fpkm_tracking','single_cut_RNA/cufflink/AID-ZOCD/genes.fpkm_tracking']] * 2
+H3K4me3_bwfiless = [['???',"???"]] * 2
+loop_files = ['zmloops/AID_loop_ZZ.bedpe', 'zmloops/AID-CD_loop_ZZ.bedpe']
 
 for fpkm_files, H3K4me3_bwfiles, loop_file in zip(fpkm_filess, H3K4me3_bwfiless, loop_files):
     tss = get_tss('hg19.ncbiRefSeq.gtf.gz')
