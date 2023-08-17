@@ -166,7 +166,7 @@ bins = 30
 ZNF143_signal_NONHK = bbi.stackup('ChIP_Nexus_rawdata/WT_ZNF143_ChIP-nexus.adp.bam.bw', tss[tss.HK.isna()].chrom, tss[tss.HK.isna()].start-flank, tss[tss.HK.isna()].start+flank, bins=bins, summary='mean')
 ZNF143_signal_HK = bbi.stackup('ChIP_Nexus_rawdata/WT_ZNF143_ChIP-nexus.adp.bam.bw', tss[~tss.HK.isna()].chrom, tss[~tss.HK.isna()].start-flank, tss[tss.HK.isna()].start+flank, bins=bins, summary='mean')
 for tssname, ZNF143_signal in zip(['NONHK', 'HK'], [ZNF143_signal_NONHK, ZNF143_signal_HK]):
-    deeptools_like(ZNF143_signal, (-flank, flank, ZNF143_signal.shape[0], 0), f'results/enrichment/ZNF143.at.{tssname}.pdf')
+    deeptools_like(ZNF143_signal, f'results/enrichment/ZNF143.at.{tssname}.pdf', extent=(-flank, flank, ZNF143_signal.shape[0], 0))
 
 # bar plot with chi2 test of independence
 observed = pandas.DataFrame({'HK' : ['NONHK', 'HK'], 'NAZNF143' : [sum((tss.HK.isna()) & (tss.ZNF143_name.isna())), sum((~tss.HK.isna()) & (tss.ZNF143_name.isna()))], 'ZNF143' : [sum((tss.HK.isna()) & (~tss.ZNF143_name.isna())), sum((~tss.HK.isna()) & (~tss.ZNF143_name.isna()))]})

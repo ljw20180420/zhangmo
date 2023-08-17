@@ -494,10 +494,12 @@ def get_tss(gtffile):
 
 
 ### draw deeptools-like plots
-def deeptools_like(mat, extent, outfile):
+def deeptools_like(mat, outfile, extent=None, **kwargs):
+    if not extent:
+        extent = (-1, 1, mat.shape[0], 0)
     mat = mat[numpy.argsort(-mat.sum(axis=1)),:]
     f, ax = matplotlib.pyplot.subplots(figsize=(5,10))
-    im = ax.matshow(mat, norm='linear', extent=extent, cmap='Reds', aspect='auto')
+    im = ax.matshow(mat, extent=extent, **kwargs)
     ax.set(yticks=[0, mat.shape[0]])
     divider = mpl_toolkits.axes_grid1.make_axes_locatable(ax)
     cax = divider.append_axes("right", size="10%", pad=0.2)
