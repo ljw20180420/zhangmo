@@ -24,7 +24,7 @@ files = filesWT + filesAID
 
 ### print full genome
 for file in files:
-    clr = load_rename_add_normVec_cov_tot(file, 1_000_000, force=True)
+    clr = load_rename_add_normVec_cov_tot(file, 1_000_000)
     print_hic_map(clr, 'results/display', ylim=[0,1], cmap='bwr', norm=matplotlib.colors.LogNorm(vmin=1e-1,vmax=1e5))
 
     # print all chromosomes
